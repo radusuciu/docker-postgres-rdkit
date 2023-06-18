@@ -39,9 +39,11 @@ jobs:
       id: check_image
       run: |
         export EXISTS=0
-        docker manifest inspect ghcr.io/${{ github.repository }}/postgres-rdkit:postgres-${{ steps.pg_latest.outputs.version }}-rdkit-${{ steps.rdkit_latest.outputs.version }} > /dev/null 2>&1 && EXISTS=1
+        if ! docker manifest inspect ghcr.io/${{ github.repository }}/postgres-rdkit:postgres-${{ steps.pg_latest.outputs.version }}-rdkit-${{ steps.rdkit_latest.outputs.version }} > /dev/null 2>&1; then
+          EXISTS=1
+        fi
         echo "exists=$EXISTS" >> "$GITHUB_OUTPUT"
-      
+
     - name: Build and push
       if: steps.check_image.outputs.exists == '1'
       uses: docker/build-push-action@v4
