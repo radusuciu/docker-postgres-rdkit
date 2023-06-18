@@ -7,7 +7,7 @@ on:
     - cron: '0 0 * * *'  # runs daily at 00:00
 
 jobs:
-  historical:
+  latest:
     runs-on: ubuntu-latest
     steps:
     - name: Check out code
@@ -33,7 +33,7 @@ jobs:
     - name: Get latest RDKit version
       id: rdkit_latest
       run: |
-        echo "version=$(curl -sS https://github.com/rdkit/rdkit/releases | grep -Po '(?<=v)[0-9]{4}_\d+' | sort -V | tail -1)" >> "$GITHUB_OUTPUT"
+        echo version="$(curl -sS "https://api.github.com/repos/rdkit/rdkit/releases/latest" | jq -r '.tag_name' | sed 's/Release_//')" >> "$GITHUB_OUTPUT"
 
     - name: Check if image already exists
       id: check_image
@@ -43,7 +43,7 @@ jobs:
 
     - name: Build and push
       if: steps.check_image.outputs.exists == '1'
-      uses: docker/build-push-action@v2
+      uses: docker/build-push-action@v4
       with:
         context: .
         push: true

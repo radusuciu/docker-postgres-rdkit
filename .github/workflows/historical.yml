@@ -32,7 +32,7 @@ jobs:
         export EXISTS=$(docker manifest inspect ghcr.io/${{ github.repository }}/postgres-rdkit:postgres-${{ matrix.postgres_version }}-rdkit-${{ matrix.rdkit_version }} > /dev/null ; echo $?)
         echo "exists=$EXISTS" >> "$GITHUB_OUTPUT"
 
-    - name: Get latest PostgreSQL major version
+    - name: Set PostgreSQL major version
       id: pg_major
       run: |
         echo "version=$(echo ${{ matrix.postgres_version }} | cut -d '.' -f 1)" >> "$GITHUB_OUTPUT"
