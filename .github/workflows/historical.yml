@@ -38,7 +38,8 @@ jobs:
     - name: Set PostgreSQL major version
       id: pg_major
       run: |
-        echo "version=$(echo ${{ matrix.postgres_version }} | cut -d '.' -f 1)" >> "$GITHUB_OUTPUT"
+        export postgres_version="${{ matrix.postgres_version }}"
+        echo "version=$(echo ${postgres_version} | cut -d '.' -f 1)" >> "$GITHUB_OUTPUT"
 
     - name: Build and push
       if: steps.check_image.outputs.exists == '1'
