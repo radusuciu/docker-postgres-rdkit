@@ -52,6 +52,6 @@ jobs:
         push: true
         tags: ghcr.io/${{ github.repository }}/postgres-rdkit:postgres-${{ steps.pg_latest.outputs.version }}-rdkit-${{ steps.rdkit_latest.outputs.version }}
         build-args:
-          postgres_image_version=${{ steps.pg_latest.outputs.image_version }}
+          postgres_image_version=${{ steps.pg_latest.outputs.version }}
           postgres_version=${{ steps.pg_latest.outputs.major_version }}
           rdkit_git_ref=Release_${{ steps.rdkit_latest.outputs.version }}
