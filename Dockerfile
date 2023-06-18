@@ -1,10 +1,12 @@
+ARG postgres_image_version
+
 FROM docker.io/postgres:${postgres_image_version}-bullseye AS builder
 LABEL org.opencontainers.image.source https://github.com/radusuciu/docker-postgres-rdkit
-ARG postgres_version
+ARG postgres_major_version
+ARG rdkit_git_ref
 ARG boost_version=1.74
 ARG cmake_version=3.26.4
 ARG rdkit_git_url=https://github.com/rdkit/rdkit.git
-ARG rdkit_git_ref=Release_2023_03_1
 
 RUN apt-get update \
     && apt-get install -yq --no-install-recommends \
@@ -25,7 +27,7 @@ RUN apt-get update \
         libboost-system${boost_version}-dev \
         libeigen3-dev \
         libfreetype6-dev \
-        postgresql-server-dev-${postgres_version}=$(postgres -V | awk '{print $3}')\* \
+        postgresql-server-dev-${postgres_major_version}=$(postgres -V | awk '{print $3}')\* \
         zlib1g-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
