@@ -1,0 +1,64 @@
+name: Check for new versions
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # runs daily at 00:00
+
+jobs:
+  check_versions:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+
+    - name: Install RDKit
+      run: pip install rdkit
+
+    - name: Get latest RDKit version
+      id: rdkit_latest
+      run: |
+        echo version="$(curl -sS "https://api.github.com/repos/rdkit/rdkit/releases/latest" | jq -r '.tag_name' | sed 's/Release_//')" >> "$GITHUB_OUTPUT"
+
+    - name: Get latest Boost version from RDKit
+      id: boost_latest
+      run: |
+        echo version="$(python -c 'from rdkit import rdBase; print(rdBase.boostVersion)')" >> "$GITHUB_OUTPUT"
+
+    - name: Get latest PostgreSQL version
+      id: pg_latest
+      run: |
+        export latest_version="$(curl -sS https://www.postgresql.org/ftp/source/ | grep -oP '(?<=v)[0-9]+\.[0-9]+' | sort -V | tail -1)"
+        echo "version=${latest_version}" >> "$GITHUB_OUTPUT"
+        echo "major_version=$(echo ${latest_version} | cut -d '.' -f 1)" >> "$GITHUB_OUTPUT"
+
+    - name: Check if branch exists
+      id: check_branch
+      run: |
+        if git show-ref --quiet refs/heads/postgres-${{ steps.pg_latest.outputs.version }}-rdkit-${{ steps.rdkit_latest.outputs.version }}
+        then
+          echo "Branch for this version combination already exists."
+          echo "exists=1" >> "$GITHUB_OUTPUT"
+        else
+          echo "New version combination detected."
+          echo "exists=0" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Create new branch and set new Boost version if necessary
+      id: update_boost
+      run: |
+        if [[ "${{ steps.check_branch.outputs.exists }}" == "0" ]]; then
+          git checkout -b postgres-${{ steps.pg_latest.outputs.version }}-rdkit-${{ steps.rdkit_latest.outputs.version }}
+        else
+          git checkout postgres-${{ steps.pg_latest.outputs.version }}-rdkit-${{ steps.rdkit_latest.outputs.version }}
+        fi
+        current_boost_version=$(grep -oP '(?<=ARG boost_version=)[0-9]+\.[0-9]+' Dockerfile)
+        if [[ "${current_boost_version}" != "${{ steps.boost_latest.outputs.version }}" ]]; then
+          sed -i "s/ARG boost_version=.*/ARG boost_version=${{ steps.boost_latest.outputs.version }}/" Dockerfile
+          git commit -am "Update Boost version to ${{ steps.boost_latest.outputs.version }}"
+          git push origin postgres-${{ steps.pg_latest.outputs.version }}-rdkit-${{ steps.rdkit_latest.outputs.version }}
+        fi
