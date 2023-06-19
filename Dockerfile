@@ -30,7 +30,7 @@ RUN apt-get update \
         libeigen3-dev \
         libfreetype6-dev \
         postgresql-server-dev-${postgres_major_version}=$(postgres -V | awk '{print $3}')\* \
-        libpq-dev-${postgres_major_version}=$(postgres -V | awk '{print $3}')\* \
+        libpq-dev=$(postgres -V | awk '{print $3}')\* \
         zlib1g-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
