@@ -74,7 +74,7 @@ RUN cmake \
     -D CMAKE_INSTALL_PREFIX=/opt/RDKit \
     -D CMAKE_BUILD_TYPE=Release \
     .
-RUN make
+RUN make -j2
 
 USER root
 WORKDIR /opt/RDKit-build/rdkit
