@@ -24,11 +24,13 @@ jobs:
       id: rdkit_latest
       run: |
         echo version="$(curl -sS "https://api.github.com/repos/rdkit/rdkit/releases/latest" | jq -r '.tag_name' | sed 's/Release_//')" >> "$GITHUB_OUTPUT"
+        echo latest rdkit version is "$version"
 
     - name: Get latest Boost version from RDKit
       id: boost_latest
       run: |
         echo version="$(python -c 'from rdkit import rdBase; print(rdBase.boostVersion)')" >> "$GITHUB_OUTPUT"
+        echo latest Boost version is "$version"
 
     - name: Get latest PostgreSQL version
       id: pg_latest
@@ -36,6 +38,7 @@ jobs:
         export latest_version="$(curl -sS https://www.postgresql.org/ftp/source/ | grep -oP '(?<=v)[0-9]+\.[0-9]+' | sort -V | tail -1)"
         echo "version=${latest_version}" >> "$GITHUB_OUTPUT"
         echo "major_version=$(echo ${latest_version} | cut -d '.' -f 1)" >> "$GITHUB_OUTPUT"
+        echo "latest PostgreSQL version is ${latest_version}"
 
     - name: Check if branch exists
       id: check_branch
