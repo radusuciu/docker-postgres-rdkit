@@ -1,0 +1,32 @@
+name: Sync workflow files and README
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/**'
+      - 'README.md'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0  # Fetch all history so we can push to other branches
+
+    - name: Set up Git
+      run: |
+        git config --global user.name "$(git log -n 1 --pretty=format:%an)"
+        git config --global user.email "$(git log -n 1 --pretty=format:%ae)"
+
+    - name: Merge changes into other branches
+      run: |
+        for branch in $(git branch --list 'postgres-*rdkit-*'); do
+          git checkout $branch
+          git merge main --strategy-option ours --no-edit || true
+          git push origin $branch
+        done
+        git checkout main
