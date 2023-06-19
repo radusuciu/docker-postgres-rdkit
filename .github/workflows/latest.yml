@@ -2,7 +2,6 @@ name: Build and Push latest versions
 
 on:
   workflow_dispatch:
-  push:
   schedule:
     - cron: '0 0 * * *'  # runs daily at 00:00
 
