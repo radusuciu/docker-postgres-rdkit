@@ -22,11 +22,15 @@ jobs:
         git config --global user.name "$(git log -n 1 --pretty=format:%an)"
         git config --global user.email "$(git log -n 1 --pretty=format:%ae)"
 
+    - name: Fetch all branches
+      run: |
+        git fetch --all
+
     - name: Merge changes into other branches
       run: |
-        for branch in $(git branch --list 'postgres-*rdkit-*'); do
-          git checkout $branch
-          git merge main --strategy-option ours --no-edit || true
+        for branch in $(git branch -r --list 'origin/postgres-*rdkit-*'); do
+          git checkout --track $branch
+          git rebase origin/main
           git push origin $branch
         done
         git checkout main
