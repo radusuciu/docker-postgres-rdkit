@@ -29,8 +29,9 @@ jobs:
     - name: Merge changes into other branches
       run: |
         for branch in $(git branch -r --list 'origin/postgres-*rdkit-*'); do
-          git checkout --track $branch
-          git rebase origin/main
-          git push origin $branch
+          branch_name=$(echo $branch | sed 's/^origin\///')  # Remove 'origin/' prefix
+          git checkout $branch_name
+          git merge origin/main --allow-unrelated-histories -m "Merged main into $branch_name"
+          git push origin $branch_name
         done
         git checkout main
