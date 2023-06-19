@@ -29,11 +29,21 @@ jobs:
     - name: Check if image already exists
       id: check_image
       run: |
-        export EXISTS=0
-        if ! docker manifest inspect ghcr.io/${{ github.repository }}/postgres-rdkit:postgres-${{ matrix.postgres_version }}-rdkit-${{ matrix.rdkit_version }} > /dev/null 2>&1; then
-          EXISTS=1
+        image="ghcr.io/${{ github.repository }}/postgres-rdkit:postgres-${{ matrix.postgres_version }}-rdkit-${{ matrix.rdkit_version }}"
+        echo "Checking if image $image exists..."
+        if output=$(docker manifest inspect "$image" 2>&1); then
+          echo "Image $image already exists, no need to build."
+          echo "exists=0" >> "$GITHUB_OUTPUT"
+        else
+          if [[ $output == *"manifest unknown"* ]]; then
+            echo "Image $image does not exist, need to build."
+            echo "exists=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "An unexpected error occurred while trying to check if the image exists:"
+            echo "$output"
+            exit 1
+          fi
         fi
-        echo "exists=$EXISTS" >> "$GITHUB_OUTPUT"
 
     - name: Set PostgreSQL major version
       id: pg_major
