@@ -52,7 +52,7 @@ jobs:
     - name: Set Git user
       run: |
         git config --global user.name "$(git log -n 1 --pretty=format:%an)"
-        git config --global user.email "$(git log -n 1 --pretty=format:%an)"
+        git config --global user.email "$(git log -n 1 --pretty=format:%ae)"
 
     - name: Create new branch and set new Boost version if necessary
       id: update_boost
