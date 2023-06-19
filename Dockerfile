@@ -20,7 +20,7 @@ RUN apt-get update \
     && echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main ${postgres_major_version}" > /etc/apt/sources.list.d/pgdg.list
 
 RUN apt-get update \
-    && apt-get install -yq --no-install-recommends \
+    && apt-get install -yq --no-install-recommends --allow-downgrades \
         build-essential \
         git \
         libboost-iostreams${boost_version}-dev \
