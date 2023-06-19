@@ -1,6 +1,6 @@
 ARG postgres_image_version
 ARG postgres_major_version
-ARG boost_version=1.74
+ARG boost_version=1_78
 
 FROM docker.io/postgres:${postgres_image_version}-bullseye AS builder
 LABEL org.opencontainers.image.source https://github.com/radusuciu/docker-postgres-rdkit
