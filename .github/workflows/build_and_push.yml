@@ -28,7 +28,9 @@ jobs:
       run: |
         branch_name=$(git branch --show-current)
         echo "branch_name=$branch_name" >> "$GITHUB_OUTPUT"
-        echo "pg_version=$(echo $branch_name | cut -d '-' -f 2)" >> "$GITHUB_OUTPUT"
+        pg_version=$(echo $branch_name | cut -d '-' -f 2)
+        echo "pg_version=$pg_version" >> "$GITHUB_OUTPUT"
+        echo "pg_major_version=$(echo $pg_version | cut -d '.' -f 1)" >> "$GITHUB_OUTPUT"
         echo "rdkit_version=$(echo $branch_name | cut -d '-' -f 4)" >> "$GITHUB_OUTPUT"
         echo "git_sha_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
@@ -60,11 +62,10 @@ jobs:
         tags: ghcr.io/${{ github.repository }}/postgres-rdkit:${{ steps.extract_versions.outputs.branch_name }}-${{ steps.extract_versions.outputs.git_sha_short }}
         build-args: |
           postgres_image_version=${{ steps.extract_versions.outputs.pg_version }}
-          postgres_major_version=${{ steps.extract_versions.outputs.pg_version | cut -d '.' -f 1 }}
+          postgres_major_version=${{ steps.extract_versions.outputs.pg_major_version }}
           rdkit_git_ref=Release_${{ steps.extract_versions.outputs.rdkit_version }}
 
     - name: Create GitHub Release
-      if: steps.docker_build.outcome == 'success'
       uses: actions/create-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
