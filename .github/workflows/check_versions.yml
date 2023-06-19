@@ -60,15 +60,16 @@ jobs:
     - name: Create new branch and set new Boost version if necessary
       id: update_boost
       run: |
+        branch_name=postgres-${{ steps.pg_latest.outputs.version }}-rdkit-${{ steps.rdkit_latest.outputs.version }}
         if [[ "${{ steps.check_branch.outputs.exists }}" == "0" ]]; then
-          git checkout -b postgres-${{ steps.pg_latest.outputs.version }}-rdkit-${{ steps.rdkit_latest.outputs.version }}
+          git checkout -b $branch_name
+          git push --set-upstream origin $branch_name
         else
-          git checkout postgres-${{ steps.pg_latest.outputs.version }}-rdkit-${{ steps.rdkit_latest.outputs.version }}
-          git pull
+          git checkout $branch_name
         fi
         current_boost_version=$(grep -oP '(?<=ARG boost_version=)[0-9]+\.[0-9]+' Dockerfile)
         if [[ "${current_boost_version}" != "${{ steps.boost_latest.outputs.version }}" ]]; then
           sed -i "s/ARG boost_version=.*/ARG boost_version=${{ steps.boost_latest.outputs.version }}/" Dockerfile
           git commit -am "Update Boost version to ${{ steps.boost_latest.outputs.version }}"
-          git push origin postgres-${{ steps.pg_latest.outputs.version }}-rdkit-${{ steps.rdkit_latest.outputs.version }}
+          git push origin $branch_name
         fi
