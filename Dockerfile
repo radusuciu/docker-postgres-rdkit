@@ -5,6 +5,8 @@ ARG boost_version=1.78
 
 FROM debian:bullseye as boost-builder
 ARG boost_version
+ENV BOOST_LIBS_TO_BUILD=iostreams,regex,serialization,system
+
 RUN apt-get update && apt-get install -y \
     build-essential \
     g++ \
@@ -85,11 +87,11 @@ cat > debian/rules <<EOF_RULES
 override_dh_auto_configure:
 	./bootstrap.sh
 override_dh_auto_build:
-	./b2 link=static,shared -j 1 --prefix=`pwd`/debian/boost-all/usr/
+    ./b2 --with-libraries=$BOOST_LIBS_TO_BUILD link=static,shared -j 1 --prefix=`pwd`/debian/boost-all/usr/
 override_dh_auto_test:
 override_dh_auto_install:
-	mkdir -p debian/boost-all/usr debian/boost-all-dev/usr debian/boost-build/usr/bin
-	./b2 link=static,shared --prefix=`pwd`/debian/boost-all/usr/ install
+    mkdir -p debian/boost-all/usr debian/boost-all-dev/usr debian/boost-build/usr/bin
+    ./b2 --with-libraries=$BOOST_LIBS_TO_BUILD link=static,shared --prefix=`pwd`/debian/boost-all/usr/ install
 	mv debian/boost-all/usr/include debian/boost-all-dev/usr
 	cp b2 debian/boost-build/usr/bin
 	./b2 install --prefix=`pwd`/debian/boost-build/usr/ install
@@ -103,6 +105,11 @@ nice -n19 ionice -c3 debuild -b
 
 EOF
 
+# separate the files for convenience
+RUN mkdir /tmp/boost_debs /tmp/boost_dev_debs && \
+    mv /tmp/*-dev*.deb /tmp/boost_dev_debs/ && \
+    mv /tmp/*.deb /tmp/boost_debs/
+
 
 FROM docker.io/postgres:${postgres_image_version}-bullseye AS builder
 LABEL org.opencontainers.image.source https://github.com/radusuciu/docker-postgres-rdkit
@@ -112,11 +119,11 @@ ARG boost_version
 ARG cmake_version=3.26.4
 ARG rdkit_git_url=https://github.com/rdkit/rdkit.git
 
-COPY --from=boost-builder /tmp/libboost-iostreams*-dev.deb \
-    /tmp/libboost-regex*-dev.deb \
-    /tmp/libboost-serialization*-dev.deb \
-    /tmp/libboost-system*-dev.deb \
-    /tmp/boost_debs/
+COPY --from=boost-builder /tmp/boost_debs/libboost-iostreams*.deb \
+    /tmp/boost_dev_debs/libboost-regex*.deb \
+    /tmp/boost_dev_debs/libboost-serialization*.deb \
+    /tmp/boost_dev_debs/libboost-system*.deb \
+    /tmp/boost_dev_debs/
 RUN dpkg -i /tmp/boost_debs/*.deb && rm -rf /tmp/boost_debs
 
 RUN apt-get update \
@@ -203,10 +210,10 @@ LABEL org.opencontainers.image.source https://github.com/radusuciu/chompounddb
 ARG postgres_major_version
 ARG boost_version
 
-COPY --from=boost-builder /tmp/libboost-iostreams[^-]*.deb \
-    /tmp/libboost-regex[^-]*.deb \
-    /tmp/libboost-serialization[^-]*.deb \
-    /tmp/libboost-system[^-]*.deb \
+COPY --from=boost-builder /tmp/boost_debs/libboost-iostreams*.deb \
+    /tmp/boost_debs/libboost-regex*.deb \
+    /tmp/boost_debs/libboost-serialization*.deb \
+    /tmp/boost_debs/libboost-system*.deb \
     /tmp/boost_debs/
 RUN dpkg -i /tmp/boost_debs/*.deb && rm -rf /tmp/boost_debs
 
