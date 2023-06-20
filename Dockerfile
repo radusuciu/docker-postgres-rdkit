@@ -103,15 +103,11 @@ mkdir -p debian/source
 echo "3.0 (quilt)" > debian/source/format
 #Build the package
 nice -n19 ionice -c3 debuild -b
+cd ..
 mkdir -p /tmp/boost_debs /tmp/boost_dev_debs
 mv *-dev*.deb /tmp/boost_dev_debs/
 mv *.deb /tmp/boost_debs/
 EOF
-
-# separate the files for convenience
-RUN mkdir /tmp/boost_debs /tmp/boost_dev_debs && \
-    mv /tmp/*-dev*.deb /tmp/boost_dev_debs/ && \
-    mv /tmp/*.deb /tmp/boost_debs/
 
 
 FROM docker.io/postgres:${postgres_image_version}-bullseye AS builder
