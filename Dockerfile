@@ -221,10 +221,6 @@ RUN dpkg -i /tmp/boost_debs/*.deb && rm -rf /tmp/boost_debs
 
 RUN apt-get update \
     && apt-get install -yq --no-install-recommends \
-        libboost-iostreams${boost_version} \
-        libboost-regex${boost_version} \
-        libboost-serialization${boost_version} \
-        libboost-system${boost_version} \
         libfreetype6 \
         zlib1g \
     && apt-get clean \
