@@ -1,10 +1,11 @@
 ARG postgres_image_version
 ARG postgres_major_version
 ARG boost_version=1.78
-
+ARG DEBIAN_FRONTEND=noninteractive
 
 FROM debian:bullseye as boost-builder
 ARG boost_version
+ARG DEBIAN_FRONTEND
 ENV BOOST_LIBS_TO_BUILD=iostreams,regex,serialization,system
 
 RUN apt-get update && apt-get install -y \
@@ -87,11 +88,11 @@ cat > debian/rules <<EOF_RULES
 override_dh_auto_configure:
 	./bootstrap.sh
 override_dh_auto_build:
-	./b2 --with-libraries=$BOOST_LIBS_TO_BUILD link=static,shared -j 2 --prefix=`pwd`/debian/boost-all/usr/
+	./b2 $(echo $BOOST_LIBS_TO_BUILD | sed 's/,/ --with-/g' | awk '{print "--with-"$0}') link=static,shared -j 2 --prefix=`pwd`/debian/boost-all/usr/
 override_dh_auto_test:
 override_dh_auto_install:
 	mkdir -p debian/boost-all/usr debian/boost-all-dev/usr debian/boost-build/usr/bin
-	./b2 --with-libraries=$BOOST_LIBS_TO_BUILD link=static,shared --prefix=`pwd`/debian/boost-all/usr/ install
+	./b2 $(echo $BOOST_LIBS_TO_BUILD | sed 's/,/ --with-/g' | awk '{print "--with-"$0}') link=static,shared --prefix=`pwd`/debian/boost-all/usr/ install
 	mv debian/boost-all/usr/include debian/boost-all-dev/usr
 	cp b2 debian/boost-build/usr/bin
 	./b2 install --prefix=`pwd`/debian/boost-build/usr/ install
@@ -116,6 +117,7 @@ LABEL org.opencontainers.image.source https://github.com/radusuciu/docker-postgr
 ARG postgres_major_version
 ARG rdkit_git_ref
 ARG boost_version
+ARG DEBIAN_FRONTEND
 ARG cmake_version=3.26.4
 ARG rdkit_git_url=https://github.com/rdkit/rdkit.git
 
