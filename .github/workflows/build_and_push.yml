@@ -59,18 +59,22 @@ jobs:
       with:
         context: .
         push: true
-        tags: ghcr.io/${{ github.repository }}/postgres-rdkit:${{ steps.extract_versions.outputs.branch_name }}-${{ steps.extract_versions.outputs.git_sha_short }}
+        tags: |
+          ghcr.io/${{ github.repository }}/postgres-rdkit:${{ steps.extract_versions.outputs.branch_name }}-${{ steps.extract_versions.outputs.git_sha_short }}
+          ghcr.io/${{ github.repository }}/postgres-rdkit:${{ steps.extract_versions.outputs.branch_name }}
+          ghcr.io/${{ github.repository }}/postgres-rdkit:postgres-${{ steps.extract_versions.outputs.pg_major_version }}-rdkit-${{ steps.extract_versions.outputs.rdkit_version }}
         build-args: |
           postgres_image_version=${{ steps.extract_versions.outputs.pg_version }}
           postgres_major_version=${{ steps.extract_versions.outputs.pg_major_version }}
           rdkit_git_ref=Release_${{ steps.extract_versions.outputs.rdkit_version }}
-
+        cache-from: type=gha,scope=${{ github.repository }}/postgres-rdkit
+        cache-to: type=gha,scope=${{ github.repository }}/postgres-rdkit
+  
     - name: Create GitHub Release
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+      uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ steps.extract_versions.outputs.branch_name }}-${{ steps.extract_versions.outputs.git_sha_short }}
-        release_name: Release ${{ steps.extract_versions.outputs.branch_name }}-${{ steps.extract_versions.outputs.git_sha_short }}
+        name: Release ${{ steps.extract_versions.outputs.branch_name }}-${{ steps.extract_versions.outputs.git_sha_short }}
         draft: false
         prerelease: false
+        token: ${{ secrets.GITHUB_TOKEN }}

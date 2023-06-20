@@ -1,10 +1,13 @@
 ARG postgres_image_version
 ARG postgres_major_version
-ARG boost_version=1.74
-
+ARG boost_version=1.78
+ARG DEBIAN_FRONTEND=noninteractive
 
 FROM debian:bullseye as boost-builder
 ARG boost_version
+ARG DEBIAN_FRONTEND
+ENV BOOST_LIBS_TO_BUILD=iostreams,regex,serialization,system
+
 RUN apt-get update && apt-get install -y \
     build-essential \
     g++ \
@@ -49,6 +52,7 @@ mkdir -p debian
 #Use the LICENSE file from nodejs as copying file
 touch debian/copying
 #Create the changelog (no messages needed)
+export DEBEMAIL="none@example.com"
 dch --create -v $DEBVERSION --package boost-all ""
 #Create copyright file
 touch debian
@@ -71,10 +75,6 @@ Architecture: any
 Depends: boost-all (= $DEBVERSION)
 Description: Boost library, version $DEBVERSION (development files)
 
-Package: boost-build
-Architecture: any
-Depends: \${misc:Depends}
-Description: Boost Build v2 executable
 EOF_CONTROL
 #Create rules file
 cat > debian/rules <<EOF_RULES
@@ -84,22 +84,23 @@ cat > debian/rules <<EOF_RULES
 override_dh_auto_configure:
 	./bootstrap.sh
 override_dh_auto_build:
-	./b2 link=static,shared -j 1 --prefix=`pwd`/debian/boost-all/usr/
+	./b2 $(echo $BOOST_LIBS_TO_BUILD | sed 's/,/ --with-/g' | awk '{print "--with-"$0}') link=static,shared -j 1 --prefix=`pwd`/debian/boost-all/usr/
 override_dh_auto_test:
 override_dh_auto_install:
-	mkdir -p debian/boost-all/usr debian/boost-all-dev/usr debian/boost-build/usr/bin
-	./b2 link=static,shared --prefix=`pwd`/debian/boost-all/usr/ install
+	mkdir -p debian/boost-all/usr debian/boost-all-dev/usr
+	./b2 $(echo $BOOST_LIBS_TO_BUILD | sed 's/,/ --with-/g' | awk '{print "--with-"$0}') link=static,shared --prefix=`pwd`/debian/boost-all/usr/ install
 	mv debian/boost-all/usr/include debian/boost-all-dev/usr
-	cp b2 debian/boost-build/usr/bin
-	./b2 install --prefix=`pwd`/debian/boost-build/usr/ install
 EOF_RULES
 #Create some misc files
-echo "8" > debian/compat
+echo "10" > debian/compat
 mkdir -p debian/source
 echo "3.0 (quilt)" > debian/source/format
 #Build the package
-nice -n19 ionice -c3 debuild -b
-
+debuild -b
+cd ..
+mkdir -p /tmp/boost_debs /tmp/boost_dev_debs
+mv boost-all-dev_${DEBVERSION}*.deb /tmp/boost_dev_debs/
+mv boost-all_${DEBVERSION}*.deb /tmp/boost_debs/
 EOF
 
 
@@ -107,15 +108,12 @@ FROM docker.io/postgres:${postgres_image_version}-bullseye AS builder
 LABEL org.opencontainers.image.source https://github.com/radusuciu/docker-postgres-rdkit
 ARG postgres_major_version
 ARG rdkit_git_ref
-ARG boost_version
+ARG DEBIAN_FRONTEND
 ARG cmake_version=3.26.4
 ARG rdkit_git_url=https://github.com/rdkit/rdkit.git
 
-COPY --from=boost-builder /tmp/libboost-iostreams*-dev.deb \
-    /tmp/libboost-regex*-dev.deb \
-    /tmp/libboost-serialization*-dev.deb \
-    /tmp/libboost-system*-dev.deb \
-    /tmp/boost_debs/
+COPY --from=boost-builder /tmp/boost_dev_debs/* /tmp/boost_debs/
+COPY --from=boost-builder /tmp/boost_debs/* /tmp/boost_debs/
 RUN dpkg -i /tmp/boost_debs/*.deb && rm -rf /tmp/boost_debs
 
 RUN apt-get update \
@@ -200,21 +198,12 @@ RUN initdb -D /opt/RDKit-build/pgdata \
 FROM docker.io/postgres:${postgres_image_version}-bullseye
 LABEL org.opencontainers.image.source https://github.com/radusuciu/chompounddb
 ARG postgres_major_version
-ARG boost_version
 
-COPY --from=boost-builder /tmp/libboost-iostreams[^-]*.deb \
-    /tmp/libboost-regex[^-]*.deb \
-    /tmp/libboost-serialization[^-]*.deb \
-    /tmp/libboost-system[^-]*.deb \
-    /tmp/boost_debs/
+COPY --from=boost-builder /tmp/boost_debs/ /tmp/boost_debs/
 RUN dpkg -i /tmp/boost_debs/*.deb && rm -rf /tmp/boost_debs
 
 RUN apt-get update \
     && apt-get install -yq --no-install-recommends \
-        libboost-iostreams${boost_version} \
-        libboost-regex${boost_version} \
-        libboost-serialization${boost_version} \
-        libboost-system${boost_version} \
         libfreetype6 \
         zlib1g \
     && apt-get clean \
@@ -222,3 +211,4 @@ RUN apt-get update \
 
 COPY --from=builder /usr/share/postgresql/${postgres_major_version}/extension/*rdkit* /usr/share/postgresql/${postgres_major_version}/extension/
 COPY --from=builder /usr/lib/postgresql/${postgres_major_version}/lib/rdkit.so /usr/lib/postgresql/${postgres_major_version}/lib/rdkit.so
+COPY ./enable_extension.sql /docker-entrypoint-initdb.d/
