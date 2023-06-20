@@ -99,8 +99,6 @@ jobs:
         name: Release ${{ steps.create_unique_tag.outputs.final_tag }}
         body: |
           ## Docker Images
-          The Docker images for this release can be found [here](https://github.com/orgs/${{ github.repository_owner }}/packages).
-    
           To pull the image, use the following command:
           ```
           docker pull ghcr.io/${{ github.repository }}/postgres-rdkit:${{ steps.extract_versions.outputs.branch_name }}
