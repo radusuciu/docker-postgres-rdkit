@@ -75,3 +75,15 @@ jobs:
           git commit -am "Update Boost version to ${{ steps.boost_latest.outputs.version }}"
           git push origin $branch_name
         fi
+
+    - name: Merge changes back to main
+      run: |
+        # Check if a new branch was created
+        if [[ "${{ steps.check_branch.outputs.exists }}" == "0" ]]; then
+          # Switch back to the main branch
+          git checkout main
+          # Merge the new branch into main
+          git merge $branch_name
+          # Push the changes to the main branch
+          git push origin main
+        fi
