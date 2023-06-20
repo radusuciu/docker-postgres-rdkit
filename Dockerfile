@@ -112,8 +112,9 @@ ARG DEBIAN_FRONTEND
 ARG cmake_version=3.26.4
 ARG rdkit_git_url=https://github.com/rdkit/rdkit.git
 
-COPY --from=boost-builder /tmp/boost_dev_debs/ /tmp/boost_dev_debs/
-RUN dpkg -i /tmp/boost_dev_debs/*.deb && rm -rf /tmp/boost_dev_debs
+COPY --from=boost-builder /tmp/boost_dev_debs/* /tmp/boost_debs/
+COPY --from=boost-builder /tmp/boost_debs/* /tmp/boost_debs/
+RUN dpkg -i /tmp/boost_debs/*.deb && rm -rf /tmp/boost_debs
 
 RUN apt-get update \
     && apt-get install -yq --no-install-recommends \
