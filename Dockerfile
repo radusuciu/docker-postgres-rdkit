@@ -120,11 +120,7 @@ ARG DEBIAN_FRONTEND
 ARG cmake_version=3.26.4
 ARG rdkit_git_url=https://github.com/rdkit/rdkit.git
 
-COPY --from=boost-builder /tmp/boost_dev_debs/libboost-iostreams*.deb \
-    /tmp/boost_dev_debs/libboost-regex*.deb \
-    /tmp/boost_dev_debs/libboost-serialization*.deb \
-    /tmp/boost_dev_debs/libboost-system*.deb \
-    /tmp/boost_dev_debs/
+COPY --from=boost-builder /tmp/boost_dev_debs/boost-all-*.deb /tmp/boost_dev_debs/
 RUN dpkg -i /tmp/boost_dev_debs/*.deb && rm -rf /tmp/boost_dev_debs
 
 RUN apt-get update \
@@ -211,11 +207,7 @@ LABEL org.opencontainers.image.source https://github.com/radusuciu/chompounddb
 ARG postgres_major_version
 ARG boost_version
 
-COPY --from=boost-builder /tmp/boost_debs/libboost-iostreams*.deb \
-    /tmp/boost_debs/libboost-regex*.deb \
-    /tmp/boost_debs/libboost-serialization*.deb \
-    /tmp/boost_debs/libboost-system*.deb \
-    /tmp/boost_debs/
+COPY --from=boost-builder /tmp/boost_debs/boost-all-*.deb /tmp/boost_debs/
 RUN dpkg -i /tmp/boost_debs/*.deb && rm -rf /tmp/boost_debs
 
 RUN apt-get update \
