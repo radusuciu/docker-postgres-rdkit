@@ -72,6 +72,9 @@ jobs:
         cache-from: type=gha,scope=${{ github.repository }}/postgres-rdkit
         cache-to: type=gha,scope=${{ github.repository }}/postgres-rdkit
 
+    - name: Fetch all tags
+      run: git fetch --tags
+
     - name: Create unique tag
       id: create_unique_tag
       run: |
