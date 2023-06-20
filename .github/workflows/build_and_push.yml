@@ -69,12 +69,32 @@ jobs:
           rdkit_git_ref=Release_${{ steps.extract_versions.outputs.rdkit_version }}
         cache-from: type=gha,scope=${{ github.repository }}/postgres-rdkit
         cache-to: type=gha,scope=${{ github.repository }}/postgres-rdkit
+
+    - name: Create unique tag
+      id: create_unique_tag
+      run: |
+        # Create a base tag with the format postgres-15.3-rdkit-2023_03_02-20230620
+        base_tag=${{ steps.extract_versions.outputs.branch_name }}-$(date +%Y%m%d)
+        # Initialize the final tag with the base tag
+        final_tag=$base_tag
+        # Initialize counter
+        counter=1
+        # Iterate over all existing tags
+        for tag in $(git tag); do
+          # If the tag already exists, append the counter to the base tag
+          if [[ "$tag" == "$final_tag" ]]; then
+            counter=$((counter + 1))
+            final_tag=${base_tag}.${counter}
+          fi
+        done
+        # Output the final tag
+        echo "final_tag=$final_tag" >> "$GITHUB_OUTPUT"
   
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: ${{ steps.extract_versions.outputs.branch_name }}-${{ steps.extract_versions.outputs.git_sha_short }}
-        name: Release ${{ steps.extract_versions.outputs.branch_name }}-${{ steps.extract_versions.outputs.git_sha_short }}
+        tag_name: ${{ steps.create_unique_tag.outputs.final_tag }}
+        name: Release ${{ steps.create_unique_tag.outputs.final_tag }}
         draft: false
         prerelease: false
         token: ${{ secrets.GITHUB_TOKEN }}
