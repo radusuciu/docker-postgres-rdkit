@@ -53,7 +53,7 @@ mkdir -p debian
 touch debian/copying
 #Create the changelog (no messages needed)
 export DEBEMAIL="none@example.com"
-dch --create -v $DEBVERSION --package boost-all -b ""
+dch --create -v $DEBVERSION --package boost-all ""
 #Create copyright file
 touch debian
 #Create control file
