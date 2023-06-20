@@ -105,8 +105,8 @@ echo "3.0 (quilt)" > debian/source/format
 nice -n19 ionice -c3 debuild -b
 cd ..
 mkdir -p /tmp/boost_debs /tmp/boost_dev_debs
-mv *-dev*.deb /tmp/boost_dev_debs/
-mv *.deb /tmp/boost_debs/
+mv boost-all-dev_${DEBVERSION}*.deb /tmp/boost_dev_debs/
+mv boost-all_${DEBVERSION}*.deb /tmp/boost_debs/
 EOF
 
 
@@ -114,7 +114,6 @@ FROM docker.io/postgres:${postgres_image_version}-bullseye AS builder
 LABEL org.opencontainers.image.source https://github.com/radusuciu/docker-postgres-rdkit
 ARG postgres_major_version
 ARG rdkit_git_ref
-ARG boost_version
 ARG DEBIAN_FRONTEND
 ARG cmake_version=3.26.4
 ARG rdkit_git_url=https://github.com/rdkit/rdkit.git
@@ -204,7 +203,6 @@ RUN initdb -D /opt/RDKit-build/pgdata \
 FROM docker.io/postgres:${postgres_image_version}-bullseye
 LABEL org.opencontainers.image.source https://github.com/radusuciu/chompounddb
 ARG postgres_major_version
-ARG boost_version
 
 COPY --from=boost-builder /tmp/boost_debs/boost-all-*.deb /tmp/boost_debs/
 RUN dpkg -i /tmp/boost_debs/*.deb && rm -rf /tmp/boost_debs
