@@ -1,6 +1,6 @@
 ARG postgres_image_version
 ARG postgres_major_version
-ARG boost_version=1_78
+ARG boost_version=1.78
 
 FROM docker.io/postgres:${postgres_image_version}-bullseye AS builder
 LABEL org.opencontainers.image.source https://github.com/radusuciu/docker-postgres-rdkit
@@ -9,6 +9,13 @@ ARG rdkit_git_ref
 ARG boost_version
 ARG cmake_version=3.26.4
 ARG rdkit_git_url=https://github.com/rdkit/rdkit.git
+
+COPY --from=boost-builder /tmp/libboost-iostreams*-dev.deb \
+    /tmp/libboost-regex*-dev.deb \
+    /tmp/libboost-serialization*-dev.deb \
+    /tmp/libboost-system*-dev.deb \
+    /tmp/boost_debs/
+RUN dpkg -i /tmp/boost_debs/*.deb && rm -rf /tmp/boost_debs
 
 RUN apt-get update \
     && apt-get install -yq --no-install-recommends \
@@ -23,10 +30,6 @@ RUN apt-get update \
     && apt-get install -yq --no-install-recommends --allow-downgrades \
         build-essential \
         git \
-        libboost-iostreams${boost_version}-dev \
-        libboost-regex${boost_version}-dev \
-        libboost-serialization${boost_version}-dev \
-        libboost-system${boost_version}-dev \
         libeigen3-dev \
         libfreetype6-dev \
         postgresql-server-dev-${postgres_major_version}=$(postgres -V | awk '{print $3}')\* \
@@ -97,6 +100,13 @@ FROM docker.io/postgres:${postgres_image_version}-bullseye
 LABEL org.opencontainers.image.source https://github.com/radusuciu/chompounddb
 ARG postgres_major_version
 ARG boost_version
+
+COPY --from=boost-builder /tmp/libboost-iostreams[^-]*.deb \
+    /tmp/libboost-regex[^-]*.deb \
+    /tmp/libboost-serialization[^-]*.deb \
+    /tmp/libboost-system[^-]*.deb \
+    /tmp/boost_debs/
+RUN dpkg -i /tmp/boost_debs/*.deb && rm -rf /tmp/boost_debs
 
 RUN apt-get update \
     && apt-get install -yq --no-install-recommends \
