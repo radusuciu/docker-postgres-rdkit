@@ -23,15 +23,16 @@ jobs:
     - name: Get latest RDKit version
       id: rdkit_latest
       run: |
-        echo version="$(curl -sS "https://api.github.com/repos/rdkit/rdkit/releases/latest" | jq -r '.tag_name' | sed 's/Release_//')" >> "$GITHUB_OUTPUT"
-        echo "Latest RDKit version is ${{ steps.rdkit_latest.outputs.version }}"
+        rdkit_version="$(curl -sS "https://api.github.com/repos/rdkit/rdkit/releases/latest" | jq -r '.tag_name' | sed 's/Release_//')"
+        echo version="${rdkit_version}" >> "$GITHUB_OUTPUT"
+        echo "Latest RDKit version is ${rdkit_version}"
 
     - name: Get latest Boost version from RDKit
       id: boost_latest
       run: |
         boost_version=$(python -c 'from rdkit import rdBase; print(rdBase.boostVersion.replace("_", "."))')
         echo version="${boost_version}" >> "$GITHUB_OUTPUT"
-        echo "Latest Boost version is ${{ steps.boost_latest.outputs.vers
+        echo "Latest Boost version is ${boost_version}"
 
     - name: Get latest PostgreSQL version
       id: pg_latest
