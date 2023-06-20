@@ -64,7 +64,9 @@ jobs:
           postgres_image_version=${{ steps.extract_versions.outputs.pg_version }}
           postgres_major_version=${{ steps.extract_versions.outputs.pg_major_version }}
           rdkit_git_ref=Release_${{ steps.extract_versions.outputs.rdkit_version }}
-
+        cache-from: type=gha,scope=${{ github.repository }}/postgres-rdkit
+        cache-to: type=gha,scope=${{ github.repository }}/postgres-rdkit
+  
     - name: Create GitHub Release
       uses: actions/create-release@v1
       env:
