@@ -2,6 +2,107 @@ ARG postgres_image_version
 ARG postgres_major_version
 ARG boost_version=1.78
 
+
+FROM debian:bullseye as boost-builder
+ARG boost_version
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    g++ \
+    python-dev \
+    autotools-dev \
+    libicu-dev \
+    libbz2-dev \
+    wget \
+    devscripts \
+    debhelper \
+    fakeroot \
+    cdbs \
+    zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/* 
+
+# script modified from
+#
+# https://github.com/ulikoehler/deb-buildscripts
+# authored by Uli Köhler and distributed under CC0 1.0 Universal
+#
+# I am including it as a heredoc because I want to keep it all in one
+# Dockerfile, though I may reconsider in the future.
+RUN <<EOF
+
+export MAJORVERSION=$(echo $boost_version | cut -d. -f1)
+export MINORVERSION=$(echo $boost_version | cut -d. -f2)
+export PATCHVERSION=$(echo $boost_version | cut -d. -f3)
+export PATCHVERSION=${PATCHVERSION:-0}
+export FULLVERSION=${MAJORVERSION}.${MINORVERSION}.${PATCHVERSION}
+export UNDERSCOREVERSION=${MAJORVERSION}_${MINORVERSION}_${PATCHVERSION}
+export DEBVERSION=${FULLVERSION}-1
+
+if [ ! -d "boost_${UNDERSCOREVERSION}" ]; then
+    wget "https://boostorg.jfrog.io/artifactory/main/release/${FULLVERSION}/source/boost_${UNDERSCOREVERSION}.tar.bz2" -O boost-all_${FULLVERSION}.orig.tar.bz2
+    tar xjvf boost-all_${FULLVERSION}.orig.tar.bz2
+fi
+
+cd boost_${UNDERSCOREVERSION}
+#Build DEB
+rm -rf debian
+mkdir -p debian
+#Use the LICENSE file from nodejs as copying file
+touch debian/copying
+#Create the changelog (no messages needed)
+dch --create -v $DEBVERSION --package boost-all ""
+#Create copyright file
+touch debian
+#Create control file
+cat > debian/control <<EOF_CONTROL
+Source: boost-all
+Maintainer: None <none@example.com>
+Section: misc
+Priority: optional
+Standards-Version: 3.9.2
+Build-Depends: debhelper (>= 8), cdbs, libbz2-dev, zlib1g-dev
+
+Package: boost-all
+Architecture: amd64
+Depends: \${shlibs:Depends}, \${misc:Depends}, boost-all (= $DEBVERSION)
+Description: Boost library, version $DEBVERSION (shared libraries)
+
+Package: boost-all-dev
+Architecture: any
+Depends: boost-all (= $DEBVERSION)
+Description: Boost library, version $DEBVERSION (development files)
+
+Package: boost-build
+Architecture: any
+Depends: \${misc:Depends}
+Description: Boost Build v2 executable
+EOF_CONTROL
+#Create rules file
+cat > debian/rules <<EOF_RULES
+#!/usr/bin/make -f
+%:
+	dh \$@
+override_dh_auto_configure:
+	./bootstrap.sh
+override_dh_auto_build:
+	./b2 link=static,shared -j 1 --prefix=`pwd`/debian/boost-all/usr/
+override_dh_auto_test:
+override_dh_auto_install:
+	mkdir -p debian/boost-all/usr debian/boost-all-dev/usr debian/boost-build/usr/bin
+	./b2 link=static,shared --prefix=`pwd`/debian/boost-all/usr/ install
+	mv debian/boost-all/usr/include debian/boost-all-dev/usr
+	cp b2 debian/boost-build/usr/bin
+	./b2 install --prefix=`pwd`/debian/boost-build/usr/ install
+EOF_RULES
+#Create some misc files
+echo "8" > debian/compat
+mkdir -p debian/source
+echo "3.0 (quilt)" > debian/source/format
+#Build the package
+nice -n19 ionice -c3 debuild -b
+
+EOF
+
+
 FROM docker.io/postgres:${postgres_image_version}-bullseye AS builder
 LABEL org.opencontainers.image.source https://github.com/radusuciu/docker-postgres-rdkit
 ARG postgres_major_version
