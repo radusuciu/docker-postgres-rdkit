@@ -104,6 +104,7 @@ echo "3.0 (quilt)" > debian/source/format
 #Build the package
 nice -n19 ionice -c3 debuild -b
 cd ..
+ls -lah
 mkdir -p /tmp/boost_debs /tmp/boost_dev_debs
 mv *-dev*.deb /tmp/boost_dev_debs/
 mv *.deb /tmp/boost_debs/
