@@ -105,8 +105,8 @@ jobs:
           ```
     
           ## Versions
-          - PostgreSQL: ${{ steps.extract_versions.outputs.pg_version }}
-          - RDKit: ${{ steps.extract_versions.outputs.rdkit_version }}
+          - PostgreSQL: ${{ steps.extract_versions.outputs.pg_version }} ([release notes](https://www.postgresql.org/docs/release/${{ steps.extract_versions.outputs.pg_version }}/))
+          - RDKit: ${{ steps.extract_versions.outputs.rdkit_version }} ([release notes](https://github.com/rdkit/rdkit/releases/tag/Release_${{ steps.extract_versions.outputs.rdkit_version }}))
           - Boost: ${{ steps.extract_versions.outputs.current_boost_version }}
         draft: false
         prerelease: false
