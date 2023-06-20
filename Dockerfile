@@ -88,7 +88,7 @@ cat > debian/rules <<EOF_RULES
 override_dh_auto_configure:
 	./bootstrap.sh
 override_dh_auto_build:
-	./b2 $(echo $BOOST_LIBS_TO_BUILD | sed 's/,/ --with-/g' | awk '{print "--with-"$0}') link=static,shared -j 2 --prefix=`pwd`/debian/boost-all/usr/
+	./b2 $(echo $BOOST_LIBS_TO_BUILD | sed 's/,/ --with-/g' | awk '{print "--with-"$0}') link=static,shared -j 1 --prefix=`pwd`/debian/boost-all/usr/
 override_dh_auto_test:
 override_dh_auto_install:
 	mkdir -p debian/boost-all/usr debian/boost-all-dev/usr debian/boost-build/usr/bin
@@ -119,12 +119,12 @@ ARG DEBIAN_FRONTEND
 ARG cmake_version=3.26.4
 ARG rdkit_git_url=https://github.com/rdkit/rdkit.git
 
-COPY --from=boost-builder /tmp/boost_debs/libboost-iostreams*.deb \
+COPY --from=boost-builder /tmp/boost_dev_debs/libboost-iostreams*.deb \
     /tmp/boost_dev_debs/libboost-regex*.deb \
     /tmp/boost_dev_debs/libboost-serialization*.deb \
     /tmp/boost_dev_debs/libboost-system*.deb \
     /tmp/boost_dev_debs/
-RUN dpkg -i /tmp/boost_debs/*.deb && rm -rf /tmp/boost_debs
+RUN dpkg -i /tmp/boost_dev_debs/*.deb && rm -rf /tmp/boost_dev_debs
 
 RUN apt-get update \
     && apt-get install -yq --no-install-recommends \
