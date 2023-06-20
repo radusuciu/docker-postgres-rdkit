@@ -75,10 +75,6 @@ Architecture: any
 Depends: boost-all (= $DEBVERSION)
 Description: Boost library, version $DEBVERSION (development files)
 
-Package: boost-build
-Architecture: any
-Depends: \${misc:Depends}
-Description: Boost Build v2 executable
 EOF_CONTROL
 #Create rules file
 cat > debian/rules <<EOF_RULES
@@ -91,11 +87,9 @@ override_dh_auto_build:
 	./b2 $(echo $BOOST_LIBS_TO_BUILD | sed 's/,/ --with-/g' | awk '{print "--with-"$0}') link=static,shared -j 1 --prefix=`pwd`/debian/boost-all/usr/
 override_dh_auto_test:
 override_dh_auto_install:
-	mkdir -p debian/boost-all/usr debian/boost-all-dev/usr debian/boost-build/usr/bin
+	mkdir -p debian/boost-all/usr debian/boost-all-dev/usr
 	./b2 $(echo $BOOST_LIBS_TO_BUILD | sed 's/,/ --with-/g' | awk '{print "--with-"$0}') link=static,shared --prefix=`pwd`/debian/boost-all/usr/ install
 	mv debian/boost-all/usr/include debian/boost-all-dev/usr
-	cp b2 debian/boost-build/usr/bin
-	./b2 install --prefix=`pwd`/debian/boost-build/usr/ install
 EOF_RULES
 #Create some misc files
 echo "10" > debian/compat
