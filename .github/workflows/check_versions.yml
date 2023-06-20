@@ -29,8 +29,9 @@ jobs:
     - name: Get latest Boost version from RDKit
       id: boost_latest
       run: |
-        echo version="$(python -c 'from rdkit import rdBase; print(rdBase.boostVersion)')" >> "$GITHUB_OUTPUT"
-        echo "Latest Boost version is ${{ steps.boost_latest.outputs.version }}"
+        boost_version=$(python -c 'from rdkit import rdBase; print(rdBase.boostVersion.replace("_", "."))')
+        echo version="${boost_version}" >> "$GITHUB_OUTPUT"
+        echo "Latest Boost version is ${{ steps.boost_latest.outputs.vers
 
     - name: Get latest PostgreSQL version
       id: pg_latest
