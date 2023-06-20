@@ -98,7 +98,7 @@ override_dh_auto_install:
 	./b2 install --prefix=`pwd`/debian/boost-build/usr/ install
 EOF_RULES
 #Create some misc files
-echo "8" > debian/compat
+echo "10" > debian/compat
 mkdir -p debian/source
 echo "3.0 (quilt)" > debian/source/format
 #Build the package
