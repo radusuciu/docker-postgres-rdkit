@@ -49,6 +49,7 @@ mkdir -p debian
 #Use the LICENSE file from nodejs as copying file
 touch debian/copying
 #Create the changelog (no messages needed)
+export DEBEMAIL="none@example.com"
 dch --create -v $DEBVERSION --package boost-all ""
 #Create copyright file
 touch debian
