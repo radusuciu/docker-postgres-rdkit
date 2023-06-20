@@ -104,7 +104,6 @@ echo "3.0 (quilt)" > debian/source/format
 #Build the package
 nice -n19 ionice -c3 debuild -b
 cd ..
-ls -lah
 mkdir -p /tmp/boost_debs /tmp/boost_dev_debs
 mv *-dev*.deb /tmp/boost_dev_debs/
 mv *.deb /tmp/boost_debs/
@@ -219,3 +218,4 @@ RUN apt-get update \
 
 COPY --from=builder /usr/share/postgresql/${postgres_major_version}/extension/*rdkit* /usr/share/postgresql/${postgres_major_version}/extension/
 COPY --from=builder /usr/lib/postgresql/${postgres_major_version}/lib/rdkit.so /usr/lib/postgresql/${postgres_major_version}/lib/rdkit.so
+COPY ./enable_extension.sql /docker-entrypoint-initdb.d/
