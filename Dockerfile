@@ -102,7 +102,7 @@ echo "8" > debian/compat
 mkdir -p debian/source
 echo "3.0 (quilt)" > debian/source/format
 #Build the package
-nice -n19 ionice -c3 debuild -b
+debuild -b
 cd ..
 mkdir -p /tmp/boost_debs /tmp/boost_dev_debs
 mv boost-all-dev_${DEBVERSION}*.deb /tmp/boost_dev_debs/
