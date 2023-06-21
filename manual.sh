@@ -17,18 +17,18 @@ boost_version=$3
 
 # Regular expressions for version validation
 postgres_version_regex="^[0-9]+\.[0-9]+$"
-rdkit_version_regex="^[0-9]{4}_[0-9]{2}_[0-9]{2}$"
+rdkit_version_regex="^[0-9]{4}_[0-9]{2}_[0-9]{1}$"
 boost_version_regex="^[0-9]+\.[0-9]+(\.[0-9]+)?$" # Adjusted to allow version without patch
 
 # Validate postgres_version
 if [[ ! $postgres_version =~ $postgres_version_regex ]]; then
-  echo "Invalid format for postgres_version. Expected format: X.Y, where X and Y are numbers. Example: 13.3"
+  echo "Invalid format for postgres_version. Expected format: X.Y, where X and Y are numbers. Example: 14.8"
   exit 1
 fi
 
 # Validate rdkit_version
 if [[ ! $rdkit_version =~ $rdkit_version_regex ]]; then
-  echo "Invalid format for rdkit_version. Expected format: YYYY_MM_DD, where YYYY, MM, and DD are numbers. Example: 2023_03_02"
+  echo "Invalid format for rdkit_version. Expected format: YYYY_MM_X, where YYYY, MM, and X are numbers. Example: 2023_03_2"
   exit 1
 fi
 
