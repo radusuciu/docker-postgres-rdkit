@@ -12,7 +12,7 @@ Assuming you have docker installed, you can pull the image using:
 docker pull ghcr.io/radusuciu/docker-postgres-rdkit/postgres-rdkit:<tag>
 ```
 
-Tags follow the format `postgres-<pgversion>-rdkit-<rdkitversion>`, for example, postgres-15-rdkit-2023_03_02. You can find the available tags on the "Releases" page of this GitHub repository. Each release also has a corresponding branch in this repository.
+Tags follow the format `postgres-<pgversion>-rdkit-<rdkitversion>`, for example, postgres-15-rdkit-2023_03_2. You can find the available tags on the "Releases" page of this GitHub repository. Each release also has a corresponding branch in this repository.
 
 To run the Docker container, use:
 
@@ -40,9 +40,10 @@ docker build -t <your_tag> --build-arg postgres_image_version=<pg_version> --bui
 
 When building the Docker image, you can specify several parameters, including:
 
-* `postgres_image_version`: The version of the PostgreSQL image to use.
-* `postgres_major_version`: The major version of PostgreSQL.
-* `rdkit_git_ref`: The version of RDKit to use. This should correspond to a GitHub release tag of the RDKit project.
+* `postgres_image_version`: The version of the PostgreSQL image to use. Formatted like: `14.8`.
+* `postgres_major_version`: The major version of PostgreSQL. Formatted like: `15`.
+* `rdkit_git_ref`: The version of RDKit to use. This should correspond to a GitHub release tag of the RDKit project. Formatted like: `2023_03_3`.
+* `boost_version`: Optional. The version of `libboost` to use. Formatted like `1.74` or `1.74.0`.
 
 ## Credits and other projects
 
