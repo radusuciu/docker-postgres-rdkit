@@ -6,7 +6,7 @@ set -e
 # Check if at least two arguments are provided
 if [ "$#" -lt 2 ]; then
     echo "Usage: $0 postgres_version rdkit_version [boost_version]"
-    echo "Example: $0 13.3 2023_03_02 1.74 or 1.74.0"
+    echo "Example: $0 15.3 2023_03_2 1.78 or 1.78.0"
     exit 1
 fi
 
@@ -22,7 +22,7 @@ boost_version_regex="^[0-9]+\.[0-9]+(\.[0-9]+)?$" # Adjusted to allow version wi
 
 # Validate postgres_version
 if [[ ! $postgres_version =~ $postgres_version_regex ]]; then
-  echo "Invalid format for postgres_version. Expected format: X.Y, where X and Y are numbers. Example: 14.8"
+  echo "Invalid format for postgres_version. Expected format: X.Y, where X and Y are numbers. Example: 15.3"
   exit 1
 fi
 
@@ -35,7 +35,7 @@ fi
 # Validate boost_version if specified
 if [ -n "${boost_version}" ]; then
   if [[ ! $boost_version =~ $boost_version_regex ]]; then
-    echo "Invalid format for boost_version. Expected format: X.Y or X.Y.Z, where X, Y, and Z are numbers. Example: 1.74 or 1.74.0"
+    echo "Invalid format for boost_version. Expected format: X.Y or X.Y.Z, where X, Y, and Z are numbers. Example: 1.78 or 1.78.0"
     exit 1
   fi
 fi
