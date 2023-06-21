@@ -65,6 +65,7 @@ jobs:
           ghcr.io/${{ github.repository }}/postgres-rdkit:${{ steps.extract_versions.outputs.branch_name }}-${{ steps.extract_versions.outputs.git_sha_short }}
           ghcr.io/${{ github.repository }}/postgres-rdkit:${{ steps.extract_versions.outputs.branch_name }}
           ghcr.io/${{ github.repository }}/postgres-rdkit:postgres-${{ steps.extract_versions.outputs.pg_major_version }}-rdkit-${{ steps.extract_versions.outputs.rdkit_version }}
+          ghcr.io/${{ github.repository }}/postgres-rdkit:postgres-${{ steps.extract_versions.outputs.pg_major_version }}-rdkit-${{ steps.extract_versions.outputs.rdkit_version }}-boost-${{ steps.extract_versions.outputs.current_boost_version }}
         build-args: |
           postgres_image_version=${{ steps.extract_versions.outputs.pg_version }}
           postgres_major_version=${{ steps.extract_versions.outputs.pg_major_version }}
