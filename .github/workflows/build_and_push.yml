@@ -99,7 +99,7 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ steps.create_unique_tag.outputs.final_tag }}
-        name: Release ${{ steps.create_unique_tag.outputs.final_tag }}
+        name: ${{ steps.create_unique_tag.outputs.final_tag }}
         body: |
           ## Docker Images
           To pull the image, use the following command:
