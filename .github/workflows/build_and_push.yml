@@ -55,6 +55,13 @@ jobs:
           fi
         fi
 
+    - name: Get latest PostgreSQL version
+      id: pg_latest
+      run: |
+        latest_version="$(curl -sS https://www.postgresql.org/ftp/source/ | grep -oP '(?<=v)[0-9]+\.[0-9]+' | sort -V | tail -1)"
+        echo "version=${latest_version}" >> "$GITHUB_OUTPUT"
+        echo "Latest PostgreSQL version is ${latest_version}"
+
     - name: Build and push
       if: steps.check_image.outputs.exists == '1'
       uses: docker/build-push-action@v4
@@ -62,7 +69,15 @@ jobs:
         context: .
         push: true
         tags: |
-          ghcr.io/${{ github.repository }}/postgres-rdkit:postgres-${{ steps.extract_versions.outputs.pg_major_version }}-rdkit-${{ steps.extract_versions.outputs.rdkit_version }}
+          ${{
+            steps.extract_versions.outputs.pg_version == steps.pg_latest.outputs.version
+            && format(
+              'ghcr.io/{0}/postgres-rdkit:postgres-{1}-rdkit-{2}',
+              github.repository,
+              steps.extract_versions.outputs.pg_major_version,
+              steps.extract_versions.outputs.rdkit_version
+            ) || ''
+          }}
           ghcr.io/${{ github.repository }}/postgres-rdkit:${{ steps.extract_versions.outputs.branch_name }}
           ghcr.io/${{ github.repository }}/postgres-rdkit:${{ steps.extract_versions.outputs.branch_name }}-boost-${{ steps.extract_versions.outputs.current_boost_version }}
           ghcr.io/${{ github.repository }}/postgres-rdkit:${{ steps.extract_versions.outputs.branch_name }}-${{ steps.extract_versions.outputs.git_sha_short }}
@@ -95,7 +110,7 @@ jobs:
         done
         # Output the final tag
         echo "final_tag=$final_tag" >> "$GITHUB_OUTPUT"
-  
+
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
       with:
