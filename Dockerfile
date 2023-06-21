@@ -203,7 +203,8 @@ COPY --from=boost-builder /tmp/boost_debs/ /tmp/boost_debs/
 RUN dpkg -i /tmp/boost_debs/*.deb && rm -rf /tmp/boost_debs
 
 RUN apt-get update \
-    && apt-get install -yq --no-install-recommends \
+    && apt-get install -yq --no-install-recommends --allow-downgrades \
+        libpq5=$(postgres -V | awk '{print $3}')\* \
         libfreetype6 \
         zlib1g \
     && apt-get clean \
