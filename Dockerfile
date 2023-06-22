@@ -197,7 +197,6 @@ RUN initdb -D /opt/RDKit-build/pgdata \
 
 
 FROM builder as collector
-ARG postgres_major_version
 
 WORKDIR /tmp/debs
 COPY --from=boost-builder /tmp/boost_debs/* .
@@ -206,6 +205,7 @@ RUN apt-get update && apt-get download libpq5=$(postgres -V | awk '{print $3}')\
 
 FROM docker.io/postgres:${postgres_image_version}-bullseye
 LABEL org.opencontainers.image.source https://github.com/radusuciu/chompounddb
+ARG postgres_major_version
 
 COPY --from=collector /tmp/debs/ /tmp/debs/
 COPY --from=builder /usr/share/postgresql/${postgres_major_version}/extension/*rdkit* /usr/share/postgresql/${postgres_major_version}/extension/
