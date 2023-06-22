@@ -123,7 +123,8 @@ RUN apt-get update \
         gnupg \
         lsb-release \
     && curl https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add - \
-    && echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main ${postgres_major_version}" > /etc/apt/sources.list.d/pgdg.list
+    && echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+    && echo "deb http://apt-archive.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg-archive main" >> /etc/apt/sources.list.d/pgdg.list
 
 RUN apt-get update \
     && apt-get install -yq --no-install-recommends --allow-downgrades \
@@ -195,21 +196,19 @@ RUN initdb -D /opt/RDKit-build/pgdata \
   && pg_ctl -D /opt/RDKit-build/pgdata stop; exit 0
 
 
-FROM docker.io/postgres:${postgres_image_version}-bullseye
-LABEL org.opencontainers.image.source https://github.com/radusuciu/chompounddb
+FROM builder as collector
 ARG postgres_major_version
 
-COPY --from=boost-builder /tmp/boost_debs/ /tmp/boost_debs/
-RUN dpkg -i /tmp/boost_debs/*.deb && rm -rf /tmp/boost_debs
+WORKDIR /tmp/debs
+COPY --from=boost-builder /tmp/boost_debs/* .
+RUN apt-get update && apt-get download libpq5=$(postgres -V | awk '{print $3}')\* libfreetype6 zlib1g
 
-RUN apt-get update \
-    && apt-get install -yq --no-install-recommends --allow-downgrades \
-        libpq5=$(postgres -V | awk '{print $3}')\* \
-        libfreetype6 \
-        zlib1g \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
 
+FROM docker.io/postgres:${postgres_image_version}-bullseye
+LABEL org.opencontainers.image.source https://github.com/radusuciu/chompounddb
+
+COPY --from=collector /tmp/debs/ /tmp/debs/
 COPY --from=builder /usr/share/postgresql/${postgres_major_version}/extension/*rdkit* /usr/share/postgresql/${postgres_major_version}/extension/
 COPY --from=builder /usr/lib/postgresql/${postgres_major_version}/lib/rdkit.so /usr/lib/postgresql/${postgres_major_version}/lib/rdkit.so
 COPY ./enable_extension.sql /docker-entrypoint-initdb.d/
+RUN dpkg -i /tmp/debs/*.deb && rm -rf /tmp/debs
