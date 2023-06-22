@@ -201,6 +201,9 @@ FROM builder as deb-collector
 WORKDIR /tmp/debs
 COPY --from=boost-builder /tmp/boost_debs/* .
 RUN <<EOF
+apt-get update
+apt-get install apt-rdepends
+
 # Fetch the full package name for libpq5
 libpq5_full_name=$(apt-cache madison libpq5 | grep $(postgres -V | awk '{print $3}') | awk '{print $3}')
 
@@ -214,7 +217,6 @@ packages="$libpq5_deps libfreetype6 zlib1g"
 resolved_packages=$(apt-rdepends $packages | grep -v "^ " | grep -v "debconf-2.0")
 
 # Update package lists and download packages
-apt-get update
 apt-get download libpq5=$libpq5_full_name $resolved_packages
 EOF
 
