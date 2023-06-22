@@ -1,3 +1,5 @@
+**NOTE**: I'm still experimenting with things in this repo!
+
 # docker-postgres-rdkit
 
 This project creates PostgreSQL docker images with the RDKit cartridge built and installed. GitHub actions are used to detect when new versions of either PostgreSQL or RDKit are released. Additionally, the version of `libboost` that is used is selected to match the version that the `rdkit` PyPI package is built with. Images are made pushed to the GitHub Container Registry (GHCR).
