@@ -200,6 +200,7 @@ FROM builder as deb-collector
 
 WORKDIR /tmp/debs
 COPY --from=boost-builder /tmp/boost_debs/* .
+USER root
 RUN <<EOF
 apt-get update
 apt-get install apt-rdepends
