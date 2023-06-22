@@ -1,0 +1,40 @@
+name: Update Compatibility Matrix
+
+on:
+  workflow_dispatch:
+#   push:
+#     branches:
+#       - 'postgres-*rdkit-*'
+
+jobs:
+  update_readme:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0 # fetches all commits and branches
+
+      - name: Generate new compatibility matrix
+        run: |
+          echo "| PostgreSQL | RDKit | Boost |" > new_matrix.md
+          echo "| --- | --- | --- |" >> new_matrix.md
+
+          for branch in $(git branch -r | grep 'origin/postgres-')
+          do
+            git checkout $branch
+            postgres_version=$(echo $branch | cut -d'-' -f2)
+            rdkit_version=$(echo $branch | cut -d'-' -f4)
+            boost_version=$(grep -oP '(?<=ARG boost_version=)[0-9]+\.[0-9]+' Dockerfile)
+            echo "| $postgres_version | $rdkit_version | $boost_version |" >> new_matrix.md
+          done
+
+          git checkout main
+          sed -i '/| PostgreSQL | RDKit | Boost |/,/| --- | --- | --- |/d' README.md
+          cat new_matrix.md README.md > temp.md && mv temp.md README.md
+
+          git config --global user.name "$(git log -n 1 --pretty=format:%an)"
+          git config --global user.email "$(git log -n 1 --pretty=format:%ae)"
+          git add README.md
+          git commit -m "Update compatibility matrix"
+          git push origin main
