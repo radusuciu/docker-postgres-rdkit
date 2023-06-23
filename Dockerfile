@@ -197,10 +197,15 @@ RUN initdb -D /opt/RDKit-build/pgdata \
 
 
 FROM builder as deb-collector
+ARG DEBIAN_FRONTEND
 
 WORKDIR /tmp/debs
 COPY --from=boost-builder /tmp/boost_debs/* .
+USER root
 RUN <<EOF
+apt-get update
+apt-get install -y apt-rdepends
+
 # Fetch the full package name for libpq5
 libpq5_full_name=$(apt-cache madison libpq5 | grep $(postgres -V | awk '{print $3}') | awk '{print $3}')
 
@@ -214,7 +219,6 @@ packages="$libpq5_deps libfreetype6 zlib1g"
 resolved_packages=$(apt-rdepends $packages | grep -v "^ " | grep -v "debconf-2.0")
 
 # Update package lists and download packages
-apt-get update
 apt-get download libpq5=$libpq5_full_name $resolved_packages
 EOF
 
@@ -222,9 +226,12 @@ EOF
 FROM docker.io/postgres:${postgres_image_version}-bullseye
 LABEL org.opencontainers.image.source https://github.com/radusuciu/chompounddb
 ARG postgres_major_version
+ARG DEBIAN_FRONTEND
 
 COPY --from=deb-collector /tmp/debs/ /tmp/debs/
 COPY --from=builder /usr/share/postgresql/${postgres_major_version}/extension/*rdkit* /usr/share/postgresql/${postgres_major_version}/extension/
 COPY --from=builder /usr/lib/postgresql/${postgres_major_version}/lib/rdkit.so /usr/lib/postgresql/${postgres_major_version}/lib/rdkit.so
 COPY ./enable_extension.sql /docker-entrypoint-initdb.d/
-RUN dpkg -i /tmp/debs/*.deb && rm -rf /tmp/debs
+RUN dpkg --force-depends -i /tmp/debs/*.deb \
+    && apt-get install --no-download --ignore-missing -f \
+    && rm -rf /tmp/debs
