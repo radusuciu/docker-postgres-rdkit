@@ -24,6 +24,8 @@ docker run -d ghcr.io/radusuciu/docker-postgres-rdkit/postgres-rdkit:<tag> bash
 
 Replace <tag> with the version tag of the Docker image.
 
+## Available Versions
+
 ## Configuration
 
 This immage is based on the official postgres image, see [here](https://hub.docker.com/_/postgres) for details on configuration.

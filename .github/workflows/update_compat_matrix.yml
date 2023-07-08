@@ -1,10 +1,9 @@
 name: Update Compatibility Matrix
 
 on:
-  workflow_dispatch:
-#   push:
-#     branches:
-#       - 'postgres-*rdkit-*'
+  push:
+    branches:
+      - 'postgres-*-*'
 
 jobs:
   update_readme:
@@ -30,11 +29,15 @@ jobs:
           done
 
           git checkout main
-          sed -i '/| PostgreSQL | RDKit | Boost |/,/| --- | --- | --- |/d' README.md
-          cat new_matrix.md README.md > temp.md && mv temp.md README.md
+
+          # Replace the matrix in README.md
+          awk '/## Available Versions/{print;printfile="new_matrix.md"} \
+               /| PostgreSQL | RDKit | Boost |/,/| --- | --- | --- |/{next} \
+               {print}' README.md > temp.md
 
           git config --global user.name "$(git log -n 1 --pretty=format:%an)"
           git config --global user.email "$(git log -n 1 --pretty=format:%ae)"
+          mv temp.md README.md
           git add README.md
           git commit -m "Update compatibility matrix"
           git push origin main
