@@ -36,7 +36,6 @@ jobs:
 
           git config --global user.name "$(git log -n 1 --pretty=format:%an)"
           git config --global user.email "$(git log -n 1 --pretty=format:%ae)"
-          mv temp.md README.md
           git add README.md
           git commit -m "Update compatibility matrix"
           git push origin main
