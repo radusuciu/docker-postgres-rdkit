@@ -47,7 +47,7 @@ jobs:
     - name: Check if branch exists
       id: check_branch
       run: |
-        if git show-ref --quiet refs/heads/postgres-${{ steps.pg_latest.outputs.version }}-rdkit-${{ steps.rdkit_latest.outputs.version }}
+        if git branch --all | grep -q "origin/postgres-${{ steps.pg_latest.outputs.version }}-rdkit-${{ steps.rdkit_latest.outputs.version }}"
         then
           echo "Branch for this version combination already exists."
           echo "exists=1" >> "$GITHUB_OUTPUT"
