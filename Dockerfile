@@ -207,7 +207,10 @@ apt-get update
 apt-get install -y apt-rdepends
 
 # Fetch the full package name for libpq5
-libpq5_full_name=$(apt-cache madison libpq5 | grep $(postgres -V | awk '{print $3}') | awk '{print $3}')
+libpq5_full_name=$(
+    apt-cache madison libpq5 | grep -F $(postgres -V | awk '{print $3}') |
+    awk '{print $3}'
+)
 
 # Get the direct dependencies of libpq5
 libpq5_deps=$(apt-cache depends libpq5 | awk '/Depends:/ {print $2}')

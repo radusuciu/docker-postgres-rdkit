@@ -37,14 +37,14 @@ This project uses GitHub Actions to automatically build a new Docker image when 
 If you want to build the Docker image manually, you can use the following command:
 
 ```bash
-docker build -t <your_tag> --build-arg postgres_image_version=<pg_version> --build-arg postgres_major_version=<pg_major_version> --build-arg rdkit_git_ref=<rdkit_version> .
+docker build -t <your_tag> --build-arg postgres_image_version=<pg_version> --build-arg postgres_major_version=<pg_major_version> --build-arg rdkit_git_ref=Release_<rdkit_version> .
 ```
 
 When building the Docker image, you can specify several parameters, including:
 
 * `postgres_image_version`: The version of the PostgreSQL image to use. Formatted like: `14.8`.
 * `postgres_major_version`: The major version of PostgreSQL. Formatted like: `15`.
-* `rdkit_git_ref`: The version of RDKit to use. This should correspond to a GitHub release tag of the RDKit project. Formatted like: `2023_03_3`.
+* `rdkit_git_ref`: The version of RDKit to use. This should correspond to a GitHub release tag of the RDKit project. Formatted like: `Release_2023_03_3`.
 * `boost_version`: Optional. The version of `libboost` to use. Formatted like `1.74` or `1.74.0`.
 
 ## Credits and other projects
