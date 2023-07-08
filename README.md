@@ -26,6 +26,17 @@ Replace <tag> with the version tag of the Docker image.
 
 ## Available Versions
 
+<!-- start automatically generated version matrix -->
+| PostgreSQL | RDKit | Boost |
+| --- | --- | --- |
+| 14.8 | 2022_03_01 | 1.74 |
+| 14.8 | 2022_03_03 | 1.74 |
+| 14.8 | 2022_03_3 | 1.74 |
+| 14.8 | 2022_03_4 | 1.74 |
+| 15.2 | 2023_03_1 | 1.78 |
+| 15.3 | 2023_03_2 | 1.78 |
+<!-- end automatically generated version matrix -->
+
 ## Configuration
 
 This immage is based on the official postgres image, see [here](https://hub.docker.com/_/postgres) for details on configuration.
