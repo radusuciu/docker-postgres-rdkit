@@ -1,6 +1,7 @@
 name: Update Compatibility Matrix
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - 'postgres-*-*'
