@@ -31,9 +31,7 @@ jobs:
           git checkout main
 
           # Replace the matrix in README.md
-          awk '/## Available Versions/{print;printfile="new_matrix.md"} \
-               /| PostgreSQL | RDKit | Boost |/,/| --- | --- | --- |/{next} \
-               {print}' README.md > temp.md
+          sed -e '/<!-- start automatically generated version matrix -->/,/<!-- end automatically generated version matrix -->/{//!d}' -e '/<!-- start automatically generated version matrix -->/r new_matrix.md' README.md > temp.md && mv temp.md README.md
 
           git config --global user.name "$(git log -n 1 --pretty=format:%an)"
           git config --global user.email "$(git log -n 1 --pretty=format:%ae)"
