@@ -29,8 +29,6 @@ Replace <tag> with the version tag of the Docker image.
 <!-- start automatically generated version matrix -->
 | PostgreSQL | RDKit | Boost |
 | --- | --- | --- |
-| 14.8 | 2022_03_01 | 1.74 |
-| 14.8 | 2022_03_03 | 1.74 |
 | 14.8 | 2022_03_3 | 1.74 |
 | 14.8 | 2022_03_4 | 1.74 |
 | 15.2 | 2023_03_1 | 1.78 |
