@@ -31,6 +31,7 @@ Replace <tag> with the version tag of the Docker image.
 | --- | --- | --- |
 | 14.8 | 2022_03_3 | 1.74 |
 | 14.8 | 2022_03_4 | 1.74 |
+| 14.8 | 2023_03_2 | 1.78 |
 | 15.2 | 2023_03_1 | 1.78 |
 | 15.3 | 2023_03_2 | 1.78 |
 <!-- end automatically generated version matrix -->
