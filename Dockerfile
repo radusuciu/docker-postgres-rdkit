@@ -1,6 +1,6 @@
 ARG postgres_image_version
 ARG postgres_major_version
-ARG boost_version=1.78
+ARG boost_version=
 ARG DEBIAN_FRONTEND=noninteractive
 
 FROM debian:bullseye as boost-builder
