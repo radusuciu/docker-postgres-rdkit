@@ -181,7 +181,7 @@ jobs:
     - name: Extract PostgreSQL and RDKit versions from branch name
       id: extract_versions
       run: |
-        branch_name=$(git branch --show-current)
+        branch_name=${{ matrix.branches }}
         echo "branch_name=$branch_name" >> "$GITHUB_OUTPUT"
         pg_version=$(echo $branch_name | cut -d '-' -f 2)
         echo "pg_version=$pg_version" >> "$GITHUB_OUTPUT"
