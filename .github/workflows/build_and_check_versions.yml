@@ -121,7 +121,8 @@ jobs:
       - name: Get current branch name
         id: get_branch_name
         run: |
-          echo "branch_name=${{github.ref}}##/" >> "$GITHUB_OUTPUT"
+          github_ref = ${{ github.ref }}
+          echo "branch_name=${github_ref##*/}" >> "$GITHUB_OUTPUT"
       - name: Generate matrix
         id: generate_matrix
         run: |
