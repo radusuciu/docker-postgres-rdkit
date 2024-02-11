@@ -140,7 +140,12 @@ jobs:
           # if we pushed a branch and we didn't create a new branch, then we just build that
           elif [[ "${{ github.event_name }}" == "push" && "${{ env.BRANCH_ALREADY_EXISTS }}" == "1" ]]; then
             echo "matrix=['${{ env.PUSHED_BRANCH_NAME }}']" >> "$GITHUB_OUTPUT"
+          # if it's a manual push we'll just build that branch
+          # technically we can also find a new branch here, but let's let the cron job handle that
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "matrix=['${{ env.BRANCH_NAME }}']" >> "$GITHUB_OUTPUT"
           fi
+
   build_and_push:
     runs-on: ubuntu-latest
     needs: set_branch_name_matrix
