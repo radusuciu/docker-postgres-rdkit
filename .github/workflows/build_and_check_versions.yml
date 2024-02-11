@@ -117,7 +117,7 @@ jobs:
     env:
       BRANCH_ALREADY_EXISTS: ${{ needs.check_versions.outputs.exists }}
       BRANCH_NAME: ${{ needs.check_versions.outputs.branch_name }}
-      PUSHED_BRANCH_NAME: ${{ github.ref }}
+      PUSHED_BRANCH_NAME: ${{ github.head_ref }}
     steps:
       - name: Generate matrix
         id: generate_matrix
@@ -127,19 +127,19 @@ jobs:
           # we need to build that branch too
           # if they are the same, then our matrix should have only one entry
 
-          # if this is scheduled and we created a new branch, then we just build that\
+          # if this is scheduled and we created a new branch, then we just build that
           if [[ "${{ github.event_name }}" == "schedule" && "${{ env.BRANCH_ALREADY_EXISTS }}" == "0" ]]; then
             echo "matrix=['${{ env.BRANCH_NAME }}']" >> "$GITHUB_OUTPUT"
           # if we pushed a branch and we also created a new branch, then we maybe need to build both
           elif [[ "${{ github.event_name }}" == "push" && "${{ env.BRANCH_ALREADY_EXISTS }}" == "0" ]]; then
-            if [[ "${{ env.BRANCH_NAME }}" == "${{ env.PUSHED_BRANCH_NAME }}##*/" ]]; then
+            if [[ "${{ env.BRANCH_NAME }}" == "${{ env.PUSHED_BRANCH_NAME }}" ]]; then
               echo "matrix=['${{ env.BRANCH_NAME }}']" >> "$GITHUB_OUTPUT"
             else
-              echo "matrix=['${{ env.BRANCH_NAME }}', '${{ env.PUSHED_BRANCH_NAME }}##*/']" >> "$GITHUB_OUTPUT"
+              echo "matrix=['${{ env.BRANCH_NAME }}', '${{ env.PUSHED_BRANCH_NAME }}']" >> "$GITHUB_OUTPUT"
             fi
           # if we pushed a branch and we didn't create a new branch, then we just build that
           elif [[ "${{ github.event_name }}" == "push" && "${{ env.BRANCH_ALREADY_EXISTS }}" == "1" ]]; then
-            echo "matrix=['${{ env.PUSHED_BRANCH_NAME }}##*/']" >> "$GITHUB_OUTPUT"
+            echo "matrix=['${{ env.PUSHED_BRANCH_NAME }}']" >> "$GITHUB_OUTPUT"
           fi
   build_and_push:
     runs-on: ubuntu-latest
