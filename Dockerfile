@@ -10,7 +10,7 @@ ARG INSTALL_DIR=/opt/rdkit
 ARG CMAKE_VERSION=3.28.3
 ARG CMAKE_INSTALL_DIR=/opt/cmake
 ARG BOOST_BUILD_CORES=2
-ARG NUM_BUILD_CORES=12
+ARG NUM_BUILD_CORES=6
 ARG MAKEFLAGS='-j${NUM_BUILD_CORES}'
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -225,11 +225,9 @@ RUN chown -R postgres ${SOURCE_DIR}
 USER postgres
 
 WORKDIR ${SOURCE_DIR}
-RUN initdb -D ${BUILD_DIR}/pgdata \
-  && pg_ctl -D ${BUILD_DIR}/pgdata -l ${BUILD_DIR}/pgdata/log.txt start \
-  && RDBASE="$PWD" LD_LIBRARY_PATH="$PWD/lib" ctest -j${NUM_BUILD_CORES} --output-on-failure
-#   && RDBASE="$PWD" LD_LIBRARY_PATH="$PWD/lib" ctest -j${NUM_BUILD_CORES} --output-on-failure \
-#   && pg_ctl -D ${BUILD_DIR}/pgdata stop; exit 0
+RUN initdb -D /tmp/pgdata \
+  && pg_ctl -D /tmp/pgdata -l /tmp/pgdata/log.txt start \
+  && RDBASE="${SOURCE_DIR}" LD_LIBRARY_PATH=""${SOURCE_DIR}/lib" ctest -j${NUM_BUILD_CORES} --output-on-failure
 
 
 ################################################################################
