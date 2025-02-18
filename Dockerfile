@@ -41,7 +41,7 @@ export UNDERSCOREVERSION=${MAJORVERSION}_${MINORVERSION}_${PATCHVERSION}
 export DEBVERSION=${FULLVERSION}-1
 
 if [ ! -d "boost_${UNDERSCOREVERSION}" ]; then
-    wget "https://boostorg.jfrog.io/artifactory/main/release/${FULLVERSION}/source/boost_${UNDERSCOREVERSION}.tar.bz2" -O boost-all_${FULLVERSION}.orig.tar.bz2
+    wget "https://archives.boost.io/release/${FULLVERSION}/source/boost_${UNDERSCOREVERSION}.tar.bz2" -O boost-all_${FULLVERSION}.orig.tar.bz2
     tar xjvf boost-all_${FULLVERSION}.orig.tar.bz2
 fi
 
