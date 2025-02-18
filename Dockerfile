@@ -6,7 +6,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 FROM debian:bullseye as boost-builder
 ARG boost_version
 ARG DEBIAN_FRONTEND
-ENV BOOST_LIBS_TO_BUILD=iostreams,regex,serialization,system
+ENV BOOST_LIBS_TO_BUILD=iostreams,regex,serialization,system,program_options
 
 RUN apt-get update && apt-get install -y \
     build-essential \
