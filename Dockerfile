@@ -6,7 +6,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 FROM debian:bullseye as boost-builder
 ARG boost_version
 ARG DEBIAN_FRONTEND
-ENV BOOST_LIBS_TO_BUILD=iostreams,regex,serialization,system
+ENV BOOST_LIBS_TO_BUILD=iostreams,regex,serialization,system,program_options
 
 RUN apt-get update && apt-get install -y \
     build-essential \
@@ -41,7 +41,7 @@ export UNDERSCOREVERSION=${MAJORVERSION}_${MINORVERSION}_${PATCHVERSION}
 export DEBVERSION=${FULLVERSION}-1
 
 if [ ! -d "boost_${UNDERSCOREVERSION}" ]; then
-    wget "https://boostorg.jfrog.io/artifactory/main/release/${FULLVERSION}/source/boost_${UNDERSCOREVERSION}.tar.bz2" -O boost-all_${FULLVERSION}.orig.tar.bz2
+    wget "https://archives.boost.io/release/${FULLVERSION}/source/boost_${UNDERSCOREVERSION}.tar.bz2" -O boost-all_${FULLVERSION}.orig.tar.bz2
     tar xjvf boost-all_${FULLVERSION}.orig.tar.bz2
 fi
 
