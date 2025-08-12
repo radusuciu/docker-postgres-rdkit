@@ -1,9 +1,13 @@
 ARG postgres_image_version
 ARG postgres_major_version
+<<<<<<< HEAD
+ARG boost_version=1.85.0.0.0.0
+=======
 ARG boost_version=1.85.0.0
+>>>>>>> main
 ARG DEBIAN_FRONTEND=noninteractive
 
-FROM debian:bullseye as boost-builder
+FROM debian:bookworm AS boost-builder
 ARG boost_version
 ARG DEBIAN_FRONTEND
 ENV BOOST_LIBS_TO_BUILD=iostreams,regex,serialization,system,program_options
@@ -11,7 +15,7 @@ ENV BOOST_LIBS_TO_BUILD=iostreams,regex,serialization,system,program_options
 RUN apt-get update && apt-get install -y \
     build-essential \
     g++ \
-    python-dev \
+    python3 \
     autotools-dev \
     libicu-dev \
     libbz2-dev \
@@ -104,7 +108,7 @@ mv boost-all_${DEBVERSION}*.deb /tmp/boost_debs/
 EOF
 
 
-FROM docker.io/postgres:${postgres_image_version}-bullseye AS builder
+FROM docker.io/postgres:${postgres_image_version}-bookworm AS builder
 LABEL org.opencontainers.image.source https://github.com/radusuciu/docker-postgres-rdkit
 ARG postgres_major_version
 ARG rdkit_git_ref
@@ -196,7 +200,7 @@ RUN initdb -D /opt/RDKit-build/pgdata \
   && pg_ctl -D /opt/RDKit-build/pgdata stop; exit 0
 
 
-FROM builder as deb-collector
+FROM builder AS deb-collector
 ARG DEBIAN_FRONTEND
 
 WORKDIR /tmp/debs
@@ -226,7 +230,7 @@ apt-get download libpq5=$libpq5_full_name $resolved_packages
 EOF
 
 
-FROM docker.io/postgres:${postgres_image_version}-bullseye
+FROM docker.io/postgres:${postgres_image_version}-bookworm
 LABEL org.opencontainers.image.source https://github.com/radusuciu/chompounddb
 ARG postgres_major_version
 ARG DEBIAN_FRONTEND
