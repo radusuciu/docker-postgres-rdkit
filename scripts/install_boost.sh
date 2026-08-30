@@ -52,7 +52,7 @@ if [ -z "$family" ]; then
         else
             echo "  (no libboost<X>-dev packages found; is the apt cache populated?)"
         fi
-        echo "Fix: raise 'debian' in versions.json to a newer suite (trixie ships 1.83 and 1.88)."
+        echo "Fix: raise 'debian' in versions.json to a suite whose Boost is >= ${floor}."
     } >&2
     exit 1
 fi
@@ -65,11 +65,24 @@ echo "Selected Boost family ${family} (floor ${floor})" >&2
 #
 # 'system' is header-only since 1.69 but RDKit 2024_09 still lists it as a
 # find_package component.
+#
+# Every compiled component RDKit links against is named explicitly, even ones
+# that happen to arrive transitively today (e.g. Debian's iostreams package
+# currently Depends: on regex) -- headers-only-present-but-library-missing is
+# exactly the failure mode this script exists to eliminate (program_options'
+# header ships in the base -dev package via Suggests:, but its compiled
+# library does not get pulled in unless asked for by name, which is how the
+# old from-source Boost image silently produced link failures). Being this
+# explicit costs nothing in the builder stage: the final runtime image's
+# package list is derived separately from `ldd` (Task 4), not from what got
+# installed here.
 apt-get install -y --no-install-recommends \
     "libboost${family}-dev" \
     "libboost-serialization${family}-dev" \
     "libboost-iostreams${family}-dev" \
-    "libboost-system${family}-dev" >&2
+    "libboost-system${family}-dev" \
+    "libboost-program-options${family}-dev" \
+    "libboost-regex${family}-dev" >&2
 
 # Report the exact installed version for the org.boost.version label (R9).
 boost_int=$(sed -n 's/^#define BOOST_VERSION \([0-9]*\)$/\1/p' /usr/include/boost/version.hpp)
