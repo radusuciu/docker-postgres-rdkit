@@ -1,4 +1,4 @@
-.PHONY: build build-boost runtime test test-build test-runtime
+.PHONY: build build-boost runtime test test-build test-runtime test-scripts
 
 DEBIAN_VERSION ?= bookworm
 BOOST_VERSION ?= 1.85.0
@@ -54,3 +54,17 @@ test-runtime:
 		.
 
 test: test-build test-runtime
+
+test-scripts:
+	@fail=0; \
+	for t in tests/test_*.sh; do \
+		[ -e "$$t" ] || continue; \
+		echo "=== $$t ==="; \
+		bash "$$t" || fail=1; \
+	done; \
+	for t in tests/test_*.py; do \
+		[ -e "$$t" ] || continue; \
+		echo "=== $$t ==="; \
+		python3 "$$t" || fail=1; \
+	done; \
+	exit $$fail
