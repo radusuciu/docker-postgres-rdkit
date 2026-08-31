@@ -1,2 +1,12 @@
+# Local build/resolve cache (Makefile)
 .make/
+
+# Never commit the from-source Boost build; see SPEC.md R2.
+Dockerfile.boost
+
+# Debug artifacts from the old branch-model workflows
+out
+github_output
+
 __pycache__/
+*.pyc
