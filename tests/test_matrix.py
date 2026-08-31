@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Unit tests for scripts/matrix.py."""
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -116,7 +117,13 @@ class TestShippedFile(unittest.TestCase):
         cfg = matrix.load_config(REPO_ROOT / "versions.json")
         self.assertEqual(cfg["debian"], "bookworm")
         self.assertEqual(cfg["exclude"], [])
-        self.assertEqual(cfg["rdkit_versions"], ["2025_09_2", "2025_03_6"])
+        # Assert shape, not the literal pair: SPEC.md requires the two most
+        # recent RDKit release families at their latest patch, so this pair
+        # is expected to change on every version bump. Pin the format
+        # (YYYY_MM_N) and the count instead of the exact values.
+        self.assertEqual(len(cfg["rdkit_versions"]), 2)
+        for version in cfg["rdkit_versions"]:
+            self.assertRegex(version, r"^\d{4}_\d{2}_\d+$")
         self.assertEqual(cfg["postgres_majors"], ["14", "15", "16", "17", "18"])
         self.assertEqual(len(matrix.expand(cfg)), 10)
 
