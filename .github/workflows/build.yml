@@ -1,0 +1,329 @@
+name: Build images
+
+# One workflow; ordering expressed with needs: (SPEC R6). workflow_run is not
+# used: it runs against the default branch rather than the triggering commit,
+# fires on completed regardless of conclusion, and has no wait primitive.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - 'Dockerfile.rdkit-core'
+      - 'enable_extension.sql'
+      - 'versions.json'
+      - 'scripts/**'
+      - '.github/workflows/**'
+  schedule:
+    # Daily. The cost tracks upstream's rebuild cadence, not the cron interval
+    # (SPEC R6); daily buys the shortest patch-pickup lag at no extra cost.
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      postgres:
+        description: 'PostgreSQL major (17) or point release (17.11)'
+        required: true
+        type: string
+      rdkit:
+        description: 'RDKit release tag suffix, e.g. 2023_09_6'
+        required: true
+        type: string
+      debian:
+        description: 'Debian suite; defaults to versions.json'
+        required: false
+        type: string
+      push:
+        description: 'Push the resulting image'
+        required: false
+        type: boolean
+        default: true
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}/postgres-rdkit
+
+jobs:
+  resolve-matrix:
+    runs-on: ubuntu-latest
+    # Ruling 26: without this, the job inherits the repository default, which
+    # may not grant packages:read. This job logs in to GHCR and runs `docker
+    # manifest inspect` for the R6 rebuild-avoidance check, and
+    # resolve_matrix.sh treats ANY `docker manifest inspect` failure as "not
+    # built" -- so a silent authorization failure here is indistinguishable
+    # from a missing tag, and the workflow would rebuild the ENTIRE matrix on
+    # every run while looking green. This permissions block is what keeps
+    # that failure mode from being silent.
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+      empty: ${{ steps.resolve.outputs.empty }}
+      latest_pair: ${{ steps.resolve.outputs.latest_pair }}
+      # The matrix's single default suite (Ruling 36). Computed once here,
+      # not re-derived from versions.json inside the build job, because this
+      # is where matrix facts already get computed.
+      default_debian: ${{ steps.resolve.outputs.default_debian }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve entries and drop already-built pairs
+        id: resolve
+        env:
+          IMAGE_REPO: ${{ env.IMAGE }}
+          DISPATCH_POSTGRES: ${{ inputs.postgres }}
+          DISPATCH_RDKIT: ${{ inputs.rdkit }}
+          DISPATCH_DEBIAN: ${{ inputs.debian }}
+        run: |
+          set -euo pipefail
+          matrix=$(scripts/resolve_matrix.sh)
+          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+          echo "latest_pair=$(scripts/matrix.py --format latest)" >> "$GITHUB_OUTPUT"
+          echo "default_debian=$(scripts/matrix.py --format debian)" >> "$GITHUB_OUTPUT"
+
+          count=$(printf '%s' "$matrix" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
+          if [ "$count" -eq 0 ]; then
+            echo "empty=true" >> "$GITHUB_OUTPUT"
+            echo "Nothing to build: every entry's build key already exists."
+          else
+            echo "empty=false" >> "$GITHUB_OUTPUT"
+            printf '%s' "$matrix" | python3 -m json.tool
+          fi
+
+  build:
+    needs: resolve-matrix
+    if: needs.resolve-matrix.outputs.empty == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJson(needs.resolve-matrix.outputs.matrix) }}
+    env:
+      # Per-entry cache scope. The Actions cache is 10 GB per repository and is
+      # evicted LRU, so concurrent matrix jobs writing mode=max to a SHARED
+      # scope evict each other and can be worse than no cache at all (SPEC R6).
+      CACHE_SCOPE: ${{ matrix.entry.debian }}-${{ matrix.entry.postgres_major }}-${{ matrix.entry.rdkit }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Loaded into the local daemon so the smoke test can run before anything
+      # is pushed (R8).
+      #
+      # no-cache-filters: builder -- mitigates an open cache-mount hazard
+      # (Dockerfile's own comments on the `builder`, `test-build` and
+      # `test-runtime` stages call this out as unverifiable from inside the
+      # Dockerfile). The `RUN --mount=type=cache,id=rdkit-build-...` mount
+      # that `make`/`make install`/`pgsql_install.sh` populate lives in the
+      # BuildKit daemon's local cache storage, not in any image layer, so it
+      # is NOT carried by `cache-from: type=gha` the way layer cache is.
+      # `setup-buildx-action` creates a brand-new builder (and therefore a
+      # cold, empty cache mount) on every job -- including a "re-run failed
+      # jobs" re-run, which GitHub Actions always restarts as a whole new
+      # runner from step 1, never mid-job. So the FIRST time this job's
+      # builder touches the `builder` stage is always right here, in this
+      # step. Without `no-cache-filters`, a `cache-from: type=gha` hit
+      # restored from an EARLIER run's export (same Dockerfile, same
+      # build-args -> same cache key) would make BuildKit treat `make`/`make
+      # install`/`pgsql_install.sh` as already-done and skip executing them
+      # -- leaving this job's cache mount empty even though the layer cache
+      # says "done". `test-build` and `test-runtime` (below) would then fail
+      # on a missing CTestTestfile.cmake, and re-running would reproduce the
+      # same false hit every time. `--no-cache-filter builder` (passed via
+      # this input) disables cache lookups for exactly that stage, forcing
+      # its RUN instructions to actually execute on every job, which
+      # guarantees the mount is genuinely populated before any later step
+      # reads it. The steps below this one deliberately do NOT repeat this
+      # flag: they run in the same buildx builder/daemon this step just
+      # populated for real, so their own cache lookups hit *local* state
+      # (which BuildKit always consults before any remote import) and
+      # correctly see a warm mount -- forcing them too would only pay the
+      # no-op-recompile cost (or, on a genuinely cold mount, the same
+      # unavoidable full-recompile cost) redundantly, four more times.
+      - name: Build runtime image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          load: true
+          tags: local/postgres-rdkit:candidate
+          no-cache-filters: builder
+          build-args: |
+            debian_version=${{ matrix.entry.debian }}
+            postgres_major_version=${{ matrix.entry.postgres_major }}
+            postgres_point_version=${{ matrix.entry.postgres_point }}
+            postgres_base_image=${{ matrix.entry.postgres_base_image }}
+            postgres_base_digest=${{ matrix.entry.postgres_base_digest }}
+            rdkit_version=${{ matrix.entry.rdkit }}
+            vcs_ref=${{ github.sha }}
+          cache-from: type=gha,scope=${{ env.CACHE_SCOPE }}
+          cache-to: type=gha,mode=max,scope=${{ env.CACHE_SCOPE }}
+
+      - name: Export source-derived label values
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: label-values-export
+          outputs: type=local,dest=./label-out
+          build-args: |
+            debian_version=${{ matrix.entry.debian }}
+            postgres_major_version=${{ matrix.entry.postgres_major }}
+            postgres_base_image=${{ matrix.entry.postgres_base_image }}
+            rdkit_version=${{ matrix.entry.rdkit }}
+          cache-from: type=gha,scope=${{ env.CACHE_SCOPE }}
+
+      # Ruling 27: an unguarded `cat` here would let an empty or truncated
+      # labels.env silently produce empty rdkit_pickle_version /
+      # rdkit_cartridge_version / boost_version build args for the PUSHED
+      # image while the job stays green (SPEC acceptance criterion 5 requires
+      # those labels present and non-empty). Mirrors the `test -s
+      # /tmp/runtime-packages.txt` guard the Dockerfile's runtime stage
+      # already applies to the same class of bug.
+      - name: Read label values
+        id: labels
+        run: |
+          set -euo pipefail
+          test -s ./label-out/labels.env || {
+            echo "ERROR: label-out/labels.env is missing or empty" >&2
+            exit 1
+          }
+          cat ./label-out/labels.env
+          for key in rdkit_pickle_version rdkit_cartridge_version boost_version; do
+            value=$(sed -n "s/^${key}=//p" ./label-out/labels.env)
+            if [ -z "${value}" ]; then
+              echo "ERROR: ${key} is missing or empty in labels.env" >&2
+              exit 1
+            fi
+          done
+          cat ./label-out/labels.env >> "$GITHUB_OUTPUT"
+
+      - name: Run the build-stage test suite
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: test-build
+          build-args: |
+            debian_version=${{ matrix.entry.debian }}
+            postgres_major_version=${{ matrix.entry.postgres_major }}
+            postgres_base_image=${{ matrix.entry.postgres_base_image }}
+            rdkit_version=${{ matrix.entry.rdkit }}
+          cache-from: type=gha,scope=${{ env.CACHE_SCOPE }}
+
+      # Guards against a runtime dependency that was present at build time but
+      # not shipped -- exactly the failure mode R3's minimization can introduce.
+      - name: Run the runtime-stage test suite
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: test-runtime
+          build-args: |
+            debian_version=${{ matrix.entry.debian }}
+            postgres_major_version=${{ matrix.entry.postgres_major }}
+            postgres_base_image=${{ matrix.entry.postgres_base_image }}
+            rdkit_version=${{ matrix.entry.rdkit }}
+          cache-from: type=gha,scope=${{ env.CACHE_SCOPE }}
+
+      - name: Functional smoke test
+        run: scripts/smoke_test.sh local/postgres-rdkit:candidate
+
+      - name: Report image size
+        # Observational only; nothing fails on it (SPEC R3).
+        run: |
+          docker image inspect local/postgres-rdkit:candidate --format 'built: {{.Size}} bytes'
+          docker pull -q "${{ matrix.entry.postgres_base_image }}"
+          docker image inspect "${{ matrix.entry.postgres_base_image }}" --format 'base:  {{.Size}} bytes'
+
+      - name: Compute tags
+        id: tags
+        env:
+          IS_CURRENT: ${{ matrix.entry.postgres_is_current }}
+          LATEST_PAIR: ${{ needs.resolve-matrix.outputs.latest_pair }}
+          PG_MAJOR: ${{ matrix.entry.postgres_major }}
+          PG_POINT: ${{ matrix.entry.postgres_point }}
+          RDKIT: ${{ matrix.entry.rdkit }}
+          BUILD_KEY: ${{ matrix.entry.build_key }}
+          SUITE: ${{ matrix.entry.debian }}
+          DEFAULT_DEBIAN: ${{ needs.resolve-matrix.outputs.default_debian }}
+        run: |
+          set -euo pipefail
+          tags=""
+          add() { tags="${tags}${tags:+$'\n'}${IMAGE}:$1"; }
+
+          if [ "${SUITE}" = "${DEFAULT_DEBIAN}" ]; then
+            # Default suite: the automatic matrix's own tags, unchanged.
+
+            # Effectively immutable: the reproducible pin.
+            add "postgres-${PG_POINT}-rdkit-${RDKIT}"
+            # Immutable: dedup / provenance.
+            add "postgres-${PG_MAJOR}-rdkit-${RDKIT}-${BUILD_KEY}"
+
+            # Moving tags MUST NOT move backwards (SPEC R4): an on-demand build
+            # of an older point release must not re-point the major tag at it.
+            if [ "${IS_CURRENT}" = "true" ]; then
+              add "postgres-${PG_MAJOR}-rdkit-${RDKIT}"
+              latest_major=$(printf '%s' "${LATEST_PAIR}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["postgres_major"])')
+              latest_rdkit=$(printf '%s' "${LATEST_PAIR}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["rdkit"])')
+              if [ "${PG_MAJOR}" = "${latest_major}" ] && [ "${RDKIT}" = "${latest_rdkit}" ]; then
+                add "latest"
+              fi
+            fi
+          else
+            # Non-default suite (Ruling 36, owner-directed, amends SPEC R4's
+            # tag shape): only reachable via workflow_dispatch's `debian`
+            # input, since the automatic matrix stays single-suite. Emit
+            # exactly two tags and nothing else -- no moving major tag, no
+            # `latest` -- so an on-demand build of a different suite can never
+            # clobber a tag the automatic matrix owns. Same conservatism SPEC
+            # 7a already applies to on-demand older point releases.
+            add "postgres-${PG_POINT}-rdkit-${RDKIT}-${SUITE}"
+            # No suite suffix needed here: build_key.sh already hashes
+            # `debian` (plus file hashes, rdkit and base_digest), so a
+            # different suite already yields a different build_key and
+            # therefore a different tag. That also means R6's
+            # rebuild-avoidance check is already suite-correct as-is.
+            add "postgres-${PG_MAJOR}-rdkit-${RDKIT}-${BUILD_KEY}"
+          fi
+
+          {
+            echo 'tags<<TAGS_EOF'
+            printf '%s\n' "$tags"
+            echo 'TAGS_EOF'
+          } >> "$GITHUB_OUTPUT"
+          printf 'Tags:\n%s\n' "$tags"
+
+      - name: Build and push
+        if: github.event_name != 'workflow_dispatch' || inputs.push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            debian_version=${{ matrix.entry.debian }}
+            postgres_major_version=${{ matrix.entry.postgres_major }}
+            postgres_point_version=${{ matrix.entry.postgres_point }}
+            postgres_base_image=${{ matrix.entry.postgres_base_image }}
+            postgres_base_digest=${{ matrix.entry.postgres_base_digest }}
+            rdkit_version=${{ matrix.entry.rdkit }}
+            rdkit_pickle_version=${{ steps.labels.outputs.rdkit_pickle_version }}
+            rdkit_cartridge_version=${{ steps.labels.outputs.rdkit_cartridge_version }}
+            boost_version=${{ steps.labels.outputs.boost_version }}
+            vcs_ref=${{ github.sha }}
+          cache-from: type=gha,scope=${{ env.CACHE_SCOPE }}
