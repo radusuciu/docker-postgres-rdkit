@@ -23,6 +23,9 @@ if printf '%s\n' "$ldd_out" | grep -q 'not found'; then
     exit 1
 fi
 
+# Lines with no resolved path (linux-vdso.so.1, /lib64/ld-linux-x86-64.so.2)
+# have no "=> /..." field and are skipped by this filter, not treated as
+# unresolved -- they're not owned by any package and load without one.
 libs=$(printf '%s\n' "$ldd_out" | awk '/=> \//{print $3}')
 
 # The runtime stage copies only rdkit.so and the extension SQL; anything the
@@ -38,15 +41,42 @@ if [ -n "$offenders" ]; then
     exit 1
 fi
 
-# dpkg -S prints "pkg:arch: /path" (or "pkg: /path"); take the package name and
-# drop any :arch qualifier. dpkg -S exits non-zero for unowned paths, which is
-# tolerated -- the /opt guard above already covers the case that matters.
-printf '%s\n' "$libs" \
-    | xargs -r dpkg -S 2>/dev/null \
+# dpkg -S matches the literal path string recorded in a package's file list at
+# packaging time, not the resolved inode. On a merged-usr suite /lib is a
+# symlink to /usr/lib, but packages recorded their files under different
+# literal prefixes depending on when they were built: some (e.g. libc6,
+# zlib1g on bookworm) are indexed under the pre-merge /lib/<triplet> path that
+# ldd renders verbatim, while others (e.g. libpng16-16, libbrotli1) are
+# indexed only under the canonical /usr/lib/<triplet> path that readlink -f
+# produces. Neither the literal ldd path nor its canonicalization matches
+# every package on its own, so both are tried and a hit from either counts.
+# A miss on both is a hard failure -- the one legitimate miss (/opt) already
+# exited at the guard above, so anything still unmapped here is a real gap.
+pkgs=""
+while IFS= read -r lib; do
+    [ -n "$lib" ] || continue
+    match=$(dpkg -S "$lib" 2>/dev/null || true)
+    if [ -z "$match" ]; then
+        canon=$(readlink -f "$lib" 2>/dev/null || true)
+        if [ -n "$canon" ] && [ "$canon" != "$lib" ]; then
+            match=$(dpkg -S "$canon" 2>/dev/null || true)
+        fi
+    fi
+    if [ -z "$match" ]; then
+        echo "ERROR: no installed package owns ${lib} (checked literal and canonicalized path)" >&2
+        exit 1
+    fi
+    pkgs="${pkgs}${match}"$'\n'
+done <<LIBS
+$libs
+LIBS
+
+# dpkg -S prints "pkg:arch: /path" (or "pkg: /path"); take the package name
+# and drop any :arch qualifier.
+printf '%s' "$pkgs" \
     | cut -d: -f1 \
-    | tr -d ' ' \
     | sort -u \
-    > "$out" || true
+    > "$out"
 
 [ -s "$out" ] || { echo "ERROR: derived an empty runtime package list for ${so}" >&2; exit 1; }
 
