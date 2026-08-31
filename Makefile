@@ -4,9 +4,19 @@
 # gets the `latest` tag. Override any of them on the command line (SPEC R11):
 #   make runtime POSTGRES=17.11 RDKIT=2023_09_6
 #   make runtime POSTGRES=15    RDKIT=2025_03_6 DEBIAN=trixie
+#
+# Each `?=` stores the literal `$(shell ...)` text, which would otherwise
+# re-fork scripts/matrix.py on every later reference. The `:=` immediately
+# below freezes it to the computed value once. A command-line override (e.g.
+# `DEBIAN=trixie`) still wins: make applies command-line variables before the
+# makefile is read, so `?=` is a no-op and `:=` just re-assigns the override
+# to itself.
 DEBIAN        ?= $(shell scripts/matrix.py --format debian)
+DEBIAN        := $(DEBIAN)
 POSTGRES      ?= $(shell scripts/matrix.py --format latest | python3 -c 'import json,sys; print(json.load(sys.stdin)["postgres_major"])')
+POSTGRES      := $(POSTGRES)
 RDKIT         ?= $(shell scripts/matrix.py --format latest | python3 -c 'import json,sys; print(json.load(sys.stdin)["rdkit"])')
+RDKIT         := $(RDKIT)
 # Escape hatch for RDKit releases whose catch_tests.cpp calls
 # Descriptors::GETAWAY unguarded (the whole 2025_03 family and 2025_09_1/_2).
 # Local/on-demand lever only -- not wired into build_key.sh or any workflow.
