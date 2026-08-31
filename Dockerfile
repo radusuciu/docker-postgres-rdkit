@@ -26,6 +26,16 @@ ARG install_dir=/opt/rdkit
 ARG cmake_version=3.28.3
 ARG cmake_install_dir=/opt/cmake
 ARG num_build_cores=4
+
+# Default OFF, identical to the previously hardcoded value: every matrix
+# build and a bare `docker build .` produce an unchanged artifact. The
+# override exists as a local/on-demand lever only -- RDKit 2025_03_* and
+# 2025_09_1/_2 call Descriptors::GETAWAY outside their own
+# `#ifdef RDK_BUILD_DESCRIPTORS3D` guard and cannot compile with it off (see
+# the cmake invocation below for the rest of that history). CI must never
+# set this: scripts/build_key.sh does not include it, so two different
+# artifacts built from the same key would be indistinguishable under R6.
+ARG rdk_build_descriptors3d=OFF
 ARG DEBIAN_FRONTEND=noninteractive
 
 
@@ -44,6 +54,7 @@ ARG cmake_version
 ARG cmake_install_dir
 ARG num_build_cores
 ARG debian_version
+ARG rdk_build_descriptors3d
 ARG DEBIAN_FRONTEND
 
 # pgdg is needed for the -dev packages matching this image's server version.
@@ -132,6 +143,19 @@ USER postgres
 # without it, so this flag supplies exactly the include path upstream itself
 # already grants in those other configurations, without flipping any feature
 # flag or patching source.
+#
+# RDK_BUILD_DESCRIPTORS3D=${rdk_build_descriptors3d}: default OFF, identical
+# to the value this was previously hardcoded to, so every matrix build and a
+# bare `docker build .` produce an unchanged artifact. Exposed as a build
+# arg (not hardcoded) purely as a local/on-demand lever: RDKit 2025_03_* and
+# 2025_09_1/_2 call Descriptors::GETAWAY in
+# Code/GraphMol/Descriptors/catch_tests.cpp outside their own
+# `#ifdef RDK_BUILD_DESCRIPTORS3D` guard and cannot compile with it off (see
+# the round-2 GETAWAY blocker this project hit against 2025_09_2 -- fixed
+# there by moving the matrix to 2026_03_6/2025_09_6, which upstream patched).
+# CI must never set this: scripts/build_key.sh does not key on it, so two
+# differently-configured images built from the same key would be
+# indistinguishable under R6.
 RUN --mount=type=cache,target=/tmp/rdkit-build,id=rdkit-build-${rdkit_version}-${postgres_major_version}-${debian_version},uid=999,gid=999 \
     cmake \
     -D RDK_BUILD_CAIRO_SUPPORT=OFF \
@@ -140,7 +164,7 @@ RUN --mount=type=cache,target=/tmp/rdkit-build,id=rdkit-build-${rdkit_version}-$
     -D RDK_BUILD_PYTHON_WRAPPERS=OFF \
     -D RDK_BUILD_COORDGEN_SUPPORT=OFF \
     -D RDK_BUILD_MAEPARSER_SUPPORT=OFF \
-    -D RDK_BUILD_DESCRIPTORS3D=OFF \
+    -D RDK_BUILD_DESCRIPTORS3D=${rdk_build_descriptors3d} \
     -D RDK_BUILD_FREESASA_SUPPORT=OFF \
     -D RDK_BUILD_MOLINTERCHANGE_SUPPORT=OFF \
     -D RDK_BUILD_YAEHMOP_SUPPORT=OFF \

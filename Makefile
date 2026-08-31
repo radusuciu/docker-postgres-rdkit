@@ -3,12 +3,14 @@
 DEBIAN ?= bookworm
 PG_MAJOR ?= 17
 RDKIT ?= 2026_03_6
+DESCRIPTORS3D ?= OFF
 
 IMAGE_TAG = postgres-rdkit:postgres-$(PG_MAJOR)-rdkit-$(RDKIT)
 BUILD_ARGS = \
 	--build-arg debian_version=$(DEBIAN) \
 	--build-arg postgres_major_version=$(PG_MAJOR) \
-	--build-arg rdkit_version=$(RDKIT)
+	--build-arg rdkit_version=$(RDKIT) \
+	--build-arg rdk_build_descriptors3d=$(DESCRIPTORS3D)
 
 build:
 	docker build \
