@@ -1,9 +1,14 @@
-# PostgreSQL-independent RDKit compile (SPEC R7 spike).
+# PostgreSQL-independent RDKit compile (SPEC R7).
 #
-# The absolute paths here MUST be byte-identical to those in Dockerfile: CMake
-# caches absolute paths and any difference invalidates the whole tree.
+# Committed, production input to every build: scripts/build_key.sh hashes
+# this file's content into every build key (R6), and the digest of the image
+# built from it is folded into the key too (scripts/resolve_matrix.sh). Not
+# a throwaway or a spike artifact.
 #
-# Throwaway unless the spike (docs/spikes/2026-08-31-rdkit-core-reuse.md) PASSES.
+# The absolute paths here (source_dir, build_dir, install_dir,
+# cmake_install_dir) MUST be byte-identical to those in Dockerfile: CMake
+# caches absolute paths and any difference invalidates the whole tree. See
+# docs/spikes/2026-08-31-rdkit-core-reuse.md for why.
 ARG debian_version=bookworm
 ARG rdkit_version=2026_03_6
 ARG rdkit_repo=https://github.com/rdkit/rdkit.git
@@ -14,6 +19,24 @@ ARG install_dir=/opt/rdkit
 ARG cmake_version=3.28.3
 ARG cmake_install_dir=/opt/cmake
 ARG num_build_cores=4
+
+# Ruling 47: where the built tree lands as a NORMAL image layer, distinct
+# from ${build_dir} (which is a cache MOUNT below, not a layer -- see the
+# comment above the cache-mounted RUN steps). Consuming Dockerfile COPYs
+# --from=rdkit-core-provider FROM this path INTO its own ${build_dir}, so
+# CMake's cached absolute paths (still /tmp/rdkit-build, unchanged) match
+# there without this export path ever needing to agree with anything in the
+# main Dockerfile.
+ARG build_export_dir=/tmp/rdkit-build-export
+
+# Local/on-demand lever only, mirroring the main Dockerfile's
+# rdk_build_descriptors3d (Ruling 35/46): default OFF, identical to what
+# this file always hardcoded, so every automatic build is unaffected. CI
+# must never set this -- scripts/build_key.sh does not key on it, and it
+# must never be added to any workflow -- see the Makefile's `core` target
+# for the local override path (a distinctly-tagged image, not a build-arg
+# override of the shared tag).
+ARG rdk_build_descriptors3d=OFF
 ARG DEBIAN_FRONTEND=noninteractive
 
 FROM docker.io/debian:${debian_version}-slim AS rdkit-core
@@ -25,6 +48,10 @@ ARG install_dir
 ARG cmake_version
 ARG cmake_install_dir
 ARG num_build_cores
+ARG build_export_dir
+ARG rdk_build_descriptors3d
+ARG rdkit_version
+ARG debian_version
 ARG DEBIAN_FRONTEND
 
 RUN apt-get update \
@@ -45,19 +72,38 @@ RUN curl -L https://github.com/Kitware/CMake/releases/download/v${cmake_version}
     && ln -s ${cmake_install_dir}/bin/ctest /usr/local/bin/ctest \
     && rm -f /tmp/cmake.sh
 
+# Ruling 47: ${build_dir} is a cache MOUNT here (not a normal layer) so a
+# crashed/interrupted `make core` resumes from already-compiled objects
+# instead of restarting a ~25-minute compile from zero -- this repo's own
+# history (`48e7fe4 brb switching to desktop. laptop keeps dying during
+# build`) is exactly the failure mode this restores. This is the mirror
+# image of the consuming Dockerfile's C4: THERE, the mount was removed
+# because the tree needed to be a real layer for `COPY --from=` to reach it.
+# HERE, nothing downstream of ${build_dir} itself needs to `COPY --from=`
+# it -- the separate export step below (into ${build_export_dir}, NOT
+# ${build_dir}) is what produces the real layer -- so the mount can come
+# back without reintroducing that hazard.
+#
+# The mount id omits postgres_major_version (unlike the consuming
+# Dockerfile's mount id, pre-R7): this compile is PostgreSQL-independent by
+# construction, which is R7's whole point. It DOES include
+# rdk_build_descriptors3d: an OFF-configured cache and an ON-configured
+# cache are different compiled trees (Ruling 46) built from the same
+# {rdkit_version, debian}, and sharing one mount id between them would let
+# either variant's stale/partial objects leak into the other's resume.
+#
 # Flag list copied verbatim from Dockerfile (HEAD) except RDK_BUILD_PGSQL
 # (OFF here, ON in the consuming stage) and the four PostgreSQL_* variables
-# (absent here, present in the consuming stage). RDK_BUILD_DESCRIPTORS3D is
-# the literal OFF default (C3): the spike does not plumb the
-# rdk_build_descriptors3d arg through.
-RUN cmake \
+# (absent here, present in the consuming stage).
+RUN --mount=type=cache,target=${build_dir},id=rdkit-build-${rdkit_version}-${debian_version}-${rdk_build_descriptors3d} \
+    cmake \
     -D RDK_BUILD_CAIRO_SUPPORT=OFF \
     -D RDK_BUILD_INCHI_SUPPORT=ON \
     -D RDK_BUILD_AVALON_SUPPORT=ON \
     -D RDK_BUILD_PYTHON_WRAPPERS=OFF \
     -D RDK_BUILD_COORDGEN_SUPPORT=OFF \
     -D RDK_BUILD_MAEPARSER_SUPPORT=OFF \
-    -D RDK_BUILD_DESCRIPTORS3D=OFF \
+    -D RDK_BUILD_DESCRIPTORS3D=${rdk_build_descriptors3d} \
     -D RDK_BUILD_FREESASA_SUPPORT=OFF \
     -D RDK_BUILD_MOLINTERCHANGE_SUPPORT=OFF \
     -D RDK_BUILD_YAEHMOP_SUPPORT=OFF \
@@ -80,4 +126,16 @@ WORKDIR ${build_dir}
 # value, so a `MAKEFLAGS='-j${num_build_cores}'` ARG would reach the shell
 # as the literal string "-j${num_build_cores}", which GNU make parses as a
 # bare `-j` -- unlimited parallel jobs.
-RUN make -j${num_build_cores}
+RUN --mount=type=cache,target=${build_dir},id=rdkit-build-${rdkit_version}-${debian_version}-${rdk_build_descriptors3d} \
+    make -j${num_build_cores}
+
+# Export the finished tree out of the cache mount into a normal image layer
+# at a DIFFERENT path (${build_export_dir}, a sibling of ${build_dir}, not
+# nested under it -- nesting under the mount's target would put the export
+# itself inside the mounted, not-a-layer directory). This is what the
+# consuming Dockerfile's `COPY --from=rdkit-core-provider` actually reads;
+# ${build_dir} itself is NOT part of this image's layers (only the mount
+# is), consistent with the mount existing purely for this image's own
+# resumability, not as an export mechanism.
+RUN --mount=type=cache,target=${build_dir},id=rdkit-build-${rdkit_version}-${debian_version}-${rdk_build_descriptors3d} \
+    mkdir -p ${build_export_dir} && cp -a ${build_dir}/. ${build_export_dir}/

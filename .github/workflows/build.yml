@@ -69,6 +69,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Ruling 48: `docker buildx imagetools inspect` (used below for the
+      # rdkit-core digest lookup, R7) needs a buildx builder instance. The
+      # `build` and `build-rdkit-core` jobs already get one via this same
+      # action for their own `docker/build-push-action` steps; this job
+      # never had one, which is a real gap now that it does its own buildx
+      # lookup.
+      - uses: docker/setup-buildx-action@v3
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -89,7 +97,25 @@ jobs:
           echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
           echo "latest_pair=$(scripts/matrix.py --format latest)" >> "$GITHUB_OUTPUT"
           echo "default_debian=$(scripts/matrix.py --format debian)" >> "$GITHUB_OUTPUT"
-          echo "cores=$(scripts/resolve_matrix.sh --cores)" >> "$GITHUB_OUTPUT"
+
+          # Ruling 45(b): `cores` is derived from `matrix` (the RESOLVED,
+          # already-registry-filtered list), NOT from `scripts/
+          # resolve_matrix.sh --cores` (which projects the raw, unfiltered
+          # entries and is deliberately registry-independent -- see its own
+          # tests). Deriving from `matrix` means a run where every entry's
+          # build key already exists resolves an EMPTY `matrix`, which
+          # dedupes to an empty `cores` too, so build-rdkit-core pushes
+          # nothing when there is nothing downstream to consume it.
+          cores=$(printf '%s' "$matrix" | python3 -c '
+          import json, sys
+          items = json.load(sys.stdin)
+          seen = []
+          for item in items:
+              pair = {"rdkit": item["rdkit"], "debian": item["debian"]}
+              if pair not in seen:
+                  seen.append(pair)
+          print(json.dumps(seen))')
+          echo "cores=${cores}" >> "$GITHUB_OUTPUT"
 
           count=$(printf '%s' "$matrix" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
           if [ "$count" -eq 0 ]; then
@@ -127,13 +153,37 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Ruling 43 (Critical): push UNCONDITIONALLY, not gated on `inputs.push`.
+      # `build` (below) can only reach this image through `FROM ghcr.io/…/
+      # rdkit-core:<rdkit>-<debian>` on a SEPARATE, ephemeral runner -- there
+      # is no local daemon state to fall back on the way `build`'s own
+      # `load: true` step gives it for the runtime image. `inputs.push` is
+      # about whether the RUNTIME image gets published; the core image is an
+      # intermediate build input keyed by {rdkit, debian}, not a release, and
+      # withholding it on a `push: false` dispatch would either leave `build`
+      # unable to resolve the FROM at all (for a brand new pair -- exactly
+      # what a dispatch dry run of a new `rdkit` input is for) or silently
+      # fall back to a STALE previously-published core, testing an artifact
+      # that is not the one this run actually built. A green dry run that
+      # verified the wrong tree is worse than a red one.
       - name: Build and push rdkit-core
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.rdkit-core
           target: rdkit-core
-          push: ${{ github.event_name != 'workflow_dispatch' || inputs.push }}
+          push: true
+          # Ruling 45(a): without this, build-push-action attaches build
+          # provenance by default, which is not guaranteed byte-stable
+          # across two pushes of identical Dockerfile.rdkit-core content --
+          # a re-push with a fresh provenance attestation could mint a NEW
+          # index digest for unchanged content. resolve_matrix.sh folds this
+          # digest into the build key (R6), so a digest that moves without a
+          # content change would mean every downstream entry's key changes
+          # and the whole matrix rebuilds, forever. See Ruling 45's residual
+          # note in resolve_matrix.sh for the (accepted, bounded) staleness
+          # that remains even with this set.
+          provenance: false
           tags: ghcr.io/${{ github.repository }}/rdkit-core:${{ matrix.entry.rdkit }}-${{ matrix.entry.debian }}
           build-args: |
             debian_version=${{ matrix.entry.debian }}

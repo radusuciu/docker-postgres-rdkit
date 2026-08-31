@@ -40,6 +40,16 @@ ARG install_dir=/opt/rdkit
 ARG cmake_install_dir=/opt/cmake
 ARG num_build_cores=4
 
+# Ruling 47: NOT one of the four paths above that must match
+# Dockerfile.rdkit-core byte-for-byte -- this is only where the builder
+# reads the finished tree FROM in the core image. It gets copied INTO
+# ${build_dir} below, which is what keeps CMake's cached absolute paths
+# (still /tmp/rdkit-build in both files) valid. Must match
+# Dockerfile.rdkit-core's own `build_export_dir` default (where that image
+# actually exports the tree to -- see its comments for why it isn't
+# ${build_dir} itself there either).
+ARG build_export_dir=/tmp/rdkit-build-export
+
 # Default OFF, identical to the previously hardcoded value: every matrix
 # build and a bare `docker build .` produce an unchanged artifact. The
 # override exists as a local/on-demand lever only -- RDKit 2025_03_* and
@@ -65,6 +75,7 @@ ARG postgres_major_version
 ARG rdkit_version
 ARG source_dir
 ARG build_dir
+ARG build_export_dir
 ARG install_dir
 ARG cmake_install_dir
 ARG num_build_cores
@@ -109,17 +120,28 @@ RUN apt-get update \
 # C4 (six cache mounts): every `--mount=type=cache,target=${build_dir}` in
 # this file is REMOVED, on all six of the RUN lines that used it (the two
 # below plus test-build's and test-runtime's ctest RUN). Dockerfile.rdkit-core
-# proved (spike) that build_dir must be a normal image layer, not a cache
-# mount, for `COPY --from=` to reach it at all -- a cache mount on this same
-# path in a later RUN would silently shadow whatever COPY just wrote,
-# reproducing "R7 works but every build is still slow" with no error. The
-# mount's original benefit (resume a crashed build without recompiling) is
-# also far smaller post-R7: the tree arriving via COPY is already built, and
-# the only compilation ${build_dir} sees from here on is the ~15-object
-# cartridge relink the spike measured -- not worth reintroducing the shadowing
-# hazard to save a ~1-minute retry.
+# proved (spike) that the tree reaching THIS stage must be a normal image
+# layer, not a cache mount, for `COPY --from=` to reach it at all -- a cache
+# mount on ${build_dir} in a later RUN would silently shadow whatever COPY
+# just wrote, reproducing "R7 works but every build is still slow" with no
+# error. The mount's original benefit (resume a crashed build without
+# recompiling) is also far smaller post-R7: the tree arriving via COPY is
+# already built, and the only compilation ${build_dir} sees from here on is
+# the ~15-object cartridge relink the spike measured -- not worth
+# reintroducing the shadowing hazard here to save what is now a roughly
+# one-minute retry.
+#
+# Ruling 47 restores a cache mount, but inside Dockerfile.rdkit-core, not
+# here: that image's own ~25-minute compile still needs crash-resumability,
+# and can have it without this stage's shadowing hazard, because it exports
+# the finished tree to a DIFFERENT path (${build_export_dir}) that is never
+# itself mounted over. The COPY below reads from that export path and writes
+# to ${build_dir} -- a rename during the copy, not a mismatch: CMake's
+# cached absolute paths are still /tmp/rdkit-build on both sides, which is
+# the invariant that actually matters (verified empirically below, not
+# assumed -- see task-18-report.md's Ruling 47 section).
 COPY --from=rdkit-core-provider --chown=postgres:postgres ${source_dir} ${source_dir}
-COPY --from=rdkit-core-provider --chown=postgres:postgres ${build_dir} ${build_dir}
+COPY --from=rdkit-core-provider --chown=postgres:postgres ${build_export_dir} ${build_dir}
 COPY --from=rdkit-core-provider ${cmake_install_dir} ${cmake_install_dir}
 ENV PATH=${cmake_install_dir}/bin:$PATH
 

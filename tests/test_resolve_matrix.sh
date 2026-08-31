@@ -39,23 +39,38 @@ else
     _fail "build keys collided across rdkit versions"
 fi
 
-echo "--- --cores de-duplicates by (rdkit, debian) ---"
-# /tmp/versions-one.json (written above) cross-products 1 postgres major with
-# 2 rdkit versions -- 2 matrix entries, but --cores reports the R7 build
-# (SPEC R7): one PostgreSQL-independent rdkit-core image per distinct
-# {rdkit_version, debian}, not one per matrix entry. len(d) == 2 here would
-# also pass if --cores just echoed the un-deduplicated matrix back (this
-# fixture happens to have only one postgres major), so it alone does not
-# prove de-duplication -- but combined with the second assertion (each core
-# entry carries ONLY rdkit and debian, not postgres_major) it does: an
-# unimplemented/removed --cores that instead returned the full matrix
-# entries would fail THAT assertion, since matrix entries also carry
-# postgres_major. Both assertions fail if the flag is dropped entirely (the
-# command would then error on an unknown argument).
+echo "--- --cores projects to {rdkit, debian} only (no postgres_major) ---"
+# /tmp/versions-one.json (written above) has only ONE postgres major, so on
+# its own this assertion does not distinguish "--cores dedupes" from
+# "--cores just re-shapes the same 2 entries" -- it only proves the output
+# carries the right keys. The de-duplication claim itself is proven by the
+# next block, against a fixture with TWO postgres majors (Ruling 44: the
+# reviewer showed this fixture alone makes len(d)==2 true whether or not
+# de-duplication is implemented, since it already has only two distinct
+# {rdkit, debian} pairs -- that was a wrong-reason assertion and is why this
+# block is now split from the real de-duplication test below).
 out=$(env -u DISPATCH_POSTGRES PG_FIXTURE_DIR="${REPO_ROOT}/tests/fixtures/registry" \
       VERSIONS_FILE=/tmp/versions-one.json "$RESOLVE" --cores)
-assert_eq "2" "$(jqlike "$out" 'len(d)')" "two rdkit versions give two core images"
 assert_eq "debian,rdkit" "$(jqlike "$out" '",".join(sorted(d[0]))')" "core entries carry only rdkit and debian"
+
+echo "--- --cores de-duplicates by (rdkit, debian) (Ruling 44) ---"
+# TWO postgres majors x TWO rdkit versions = 4 matrix entries (verified
+# directly below, against the SAME fixture, with no --cores flag) but only 2
+# distinct {rdkit, debian} pairs. This is the assertion that actually falls
+# over if de-duplication is removed and --cores instead returns one entry
+# per matrix entry (4, not 2) -- unlike the single-postgres-major fixture
+# above, which stays green either way. No registry fixture is needed: --cores
+# exits before resolve_pg.sh is ever called, so a second postgres major here
+# costs nothing.
+cat > /tmp/versions-cores.json <<'JSON'
+{"debian":"bookworm","postgres_majors":["17","16"],"rdkit_versions":["2026_03_6","2025_09_6"],"exclude":[]}
+JSON
+cores_fixture_matrix=$(env -u DISPATCH_POSTGRES VERSIONS_FILE=/tmp/versions-cores.json \
+      "${REPO_ROOT}/scripts/matrix.py" --file /tmp/versions-cores.json --format json)
+assert_eq "4" "$(jqlike "$cores_fixture_matrix" 'len(d)')" "fixture sanity check: 2 majors x 2 rdkit versions is 4 matrix entries"
+out=$(env -u DISPATCH_POSTGRES PG_FIXTURE_DIR="${REPO_ROOT}/tests/fixtures/registry" \
+      VERSIONS_FILE=/tmp/versions-cores.json "$RESOLVE" --cores)
+assert_eq "2" "$(jqlike "$out" 'len(d)')" "4 matrix entries de-duplicate to 2 core images"
 
 echo "--- dispatch mode: exactly the requested pair ---"
 out=$(DISPATCH_POSTGRES=17.9 DISPATCH_RDKIT=2023_09_6 \
@@ -146,10 +161,19 @@ echo "--- registry check (for real) skips entries that already exist ---"
 # C2(b): a stub `docker` ahead of PATH whose `manifest inspect` always
 # succeeds, with SKIP_REGISTRY_CHECK unset, must yield an empty result -- this
 # is the only coverage the R6 skip branch gets (the live GHCR repo cannot be
-# read anonymously, so Step 5's dry run can never exercise it).
+# read anonymously, so Step 5's dry run can never exercise it). The core
+# digest lookup (`buildx imagetools inspect`, R7) runs first in every
+# iteration regardless of the postgres-side check below, so this stub must
+# answer it too -- "not found" (a real, benign shape, per Ruling 48) rather
+# than falling through to the catch-all `exit 1`, which the digest lookup
+# would now (correctly) treat as a genuine failure and abort the whole run.
 STUB_BIN="$(mktemp -d)"
 cat > "${STUB_BIN}/docker" <<'STUB'
 #!/usr/bin/env bash
+if [ "$1" = "buildx" ] && [ "$2" = "imagetools" ] && [ "$3" = "inspect" ]; then
+    echo "ERROR: $4: not found" >&2
+    exit 1
+fi
 if [ "$1" = "manifest" ] && [ "$2" = "inspect" ]; then
     exit 0
 fi
@@ -161,6 +185,78 @@ out=$(env -u SKIP_REGISTRY_CHECK PATH="${STUB_BIN}:${PATH}" \
       PG_FIXTURE_DIR="${REPO_ROOT}/tests/fixtures/registry" \
       VERSIONS_FILE=/tmp/versions-one.json "$RESOLVE")
 assert_eq "0" "$(jqlike "$out" 'len(d)')" "registry check (for real) skips entries that already exist"
+rm -rf "$STUB_BIN"
+
+echo "--- rdkit-core digest lookup: 'not found' is benign, not an error (Ruling 48) ---"
+# A stub `docker` whose `buildx imagetools inspect` logs the queried ref and
+# reports a "not found" error (the shape a brand-new {rdkit, debian} pair --
+# not yet pushed by build-rdkit-core -- actually produces), and whose
+# `manifest inspect` always fails (so the postgres-side "already built?"
+# check never short-circuits this entry, and the run reaches the resolved
+# output). This proves two things a bare "did it crash" check would not:
+# the exact ref queried (${IMAGE_REPO%/*}/rdkit-core:<rdkit>-<suite>), and
+# that a "not found" lookup does NOT abort the run.
+STUB_BIN="$(mktemp -d)"
+CORE_REF_LOG="$(mktemp)"
+cat > "${STUB_BIN}/docker" <<STUB
+#!/usr/bin/env bash
+if [ "\$1" = "buildx" ] && [ "\$2" = "imagetools" ] && [ "\$3" = "inspect" ]; then
+    echo "\$4" >> "${CORE_REF_LOG}"
+    echo "ERROR: \$4: not found" >&2
+    exit 1
+fi
+if [ "\$1" = "manifest" ] && [ "\$2" = "inspect" ]; then
+    exit 1
+fi
+exit 1
+STUB
+chmod +x "${STUB_BIN}/docker"
+
+out=$(env -u SKIP_REGISTRY_CHECK PATH="${STUB_BIN}:${PATH}" \
+      PG_FIXTURE_DIR="${REPO_ROOT}/tests/fixtures/registry" \
+      VERSIONS_FILE=/tmp/versions-one.json "$RESOLVE")
+rc=$?
+TESTS_RUN=$((TESTS_RUN + 1))
+if [ "$rc" -eq 0 ]; then
+    pass "'not found' core digest lookup does not fail the run"
+else
+    _fail "'not found' core digest lookup unexpectedly failed the run"
+fi
+assert_eq "2" "$(jqlike "$out" 'len(d)')" "entries still resolve when the core digest is merely unpublished"
+assert_eq "ghcr.io/example/rdkit-core:2026_03_6-bookworm" "$(head -n1 "$CORE_REF_LOG")" \
+    "core_ref is constructed from IMAGE_REPO's registry/owner/repo, not postgres-rdkit's own name"
+rm -rf "$STUB_BIN" "$CORE_REF_LOG"
+
+echo "--- rdkit-core digest lookup: a genuine failure is NOT silently swallowed (Ruling 48) ---"
+# Same shape, but the stub reports an unrelated failure (auth/network/a
+# missing buildx plugin), not "not found". Before this fix, `2>/dev/null ||
+# echo ""` made this indistinguishable from "not published yet" and the run
+# stayed green forever with a build key silently missing this input.
+STUB_BIN="$(mktemp -d)"
+cat > "${STUB_BIN}/docker" <<'STUB'
+#!/usr/bin/env bash
+if [ "$1" = "buildx" ] && [ "$2" = "imagetools" ] && [ "$3" = "inspect" ]; then
+    echo "denied: authentication required" >&2
+    exit 1
+fi
+if [ "$1" = "manifest" ] && [ "$2" = "inspect" ]; then
+    exit 1
+fi
+exit 1
+STUB
+chmod +x "${STUB_BIN}/docker"
+
+err_out=$(env -u SKIP_REGISTRY_CHECK PATH="${STUB_BIN}:${PATH}" \
+      PG_FIXTURE_DIR="${REPO_ROOT}/tests/fixtures/registry" \
+      VERSIONS_FILE=/tmp/versions-one.json "$RESOLVE" 2>&1)
+rc=$?
+TESTS_RUN=$((TESTS_RUN + 1))
+if [ "$rc" -ne 0 ]; then
+    pass "a genuine core digest lookup failure fails the run"
+else
+    _fail "a genuine core digest lookup failure was silently swallowed (exited 0)"
+fi
+assert_contains "$err_out" "digest lookup failed" "the failure names what failed"
 rm -rf "$STUB_BIN"
 
 finish

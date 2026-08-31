@@ -44,7 +44,23 @@ LABELS_TMP := $(CACHE_DIR)/labels-tmp-$(POSTGRES)-$(RDKIT)-$(DEBIAN)
 # local target instead builds and consumes a LOCAL core image, one per
 # {RDKIT, DEBIAN} (not per POSTGRES/SUITE_SUFFIX -- that's the whole point
 # of R7: one core tree shared across every PostgreSQL major).
-CORE_IMAGE := rdkit-core:$(RDKIT)-$(DEBIAN)
+#
+# Ruling 46: R7 made `DESCRIPTORS3D` (the escape hatch for RDKit releases
+# whose catch_tests.cpp calls Descriptors::GETAWAY unguarded, Ruling 35)
+# unreachable -- every target now depends on `core`, and `core`'s
+# Dockerfile.rdkit-core hardcoded RDK_BUILD_DESCRIPTORS3D=OFF, so `make core`
+# died compiling catch_tests.cpp before `DESCRIPTORS3D=ON` ever got a chance
+# to matter downstream. A DESCRIPTORS3D=ON core is a DIFFERENT compiled tree
+# from the default (OFF) one, so it gets a DISTINCT local tag (`-d3d`
+# suffix) rather than overwriting the shared `rdkit-core:<rdkit>-<debian>`
+# tag every other build depends on -- this keeps `make core` (no override)
+# and `make core DESCRIPTORS3D=ON` from clobbering each other's cache.
+ifeq ($(DESCRIPTORS3D),OFF)
+D3D_SUFFIX :=
+else
+D3D_SUFFIX := -d3d
+endif
+CORE_IMAGE := rdkit-core:$(RDKIT)-$(DEBIAN)$(D3D_SUFFIX)
 
 # Make cannot pass a literal comma inside $(call); this is the standard escape.
 COMMA := ,
@@ -109,6 +125,7 @@ core:
 		--target rdkit-core \
 		--build-arg debian_version=$(DEBIAN) \
 		--build-arg rdkit_version=$(RDKIT) \
+		--build-arg rdk_build_descriptors3d=$(DESCRIPTORS3D) \
 		-t $(CORE_IMAGE) \
 		.
 

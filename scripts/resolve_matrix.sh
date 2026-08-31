@@ -107,18 +107,60 @@ while read -r entry; do
     # R7: fold the rdkit-core image's digest into the build key too, so a
     # core rebuild (a new RDKit patch, a Dockerfile.rdkit-core change) is
     # noticed the same way a new postgres base digest already is (R6).
+    # `build_key.sh` already hashes Dockerfile.rdkit-core's own content, but
+    # that alone is not enough: the core is `FROM debian:<suite>-slim`, a
+    # moving tag, so its actual contents can change with no change to any
+    # hashed input. The digest is the only thing that notices that.
     # IMAGE_REPO is "<registry>/<owner>/<repo>/postgres-rdkit" (see build.yml);
     # stripping the last path segment and appending "rdkit-core:<rdkit>-
     # <suite>" reaches the sibling repository build-rdkit-core publishes to.
-    # Skipped under SKIP_REGISTRY_CHECK=1 like the postgres check below, and
-    # tolerant of a missing/unpublished core image (empty digest) the same
-    # way -- a core image that doesn't exist yet isn't this script's problem
-    # to raise; it just means the key can't yet depend on it.
+    # Skipped under SKIP_REGISTRY_CHECK=1 like the postgres check below.
+    #
+    # Ruling 48: a lookup that FAILS (auth, network, missing buildx) must not
+    # collapse into the same empty-string result as a core image that
+    # genuinely does not exist yet -- those two cases are indistinguishable
+    # from `2>/dev/null || echo ""`, and silently swallowing a real failure
+    # here means the build key would silently, permanently omit a declared
+    # input every future run, while CI stays green throughout. "Not found"
+    # (the image doesn't exist yet for this {rdkit, debian} -- e.g. a brand
+    # new pair, resolved before build-rdkit-core has ever pushed it) is the
+    # one error shape this loop treats as benign; every other failure exits
+    # loudly.
+    #
+    # Ruling 45's residual: resolve-matrix always runs BEFORE
+    # build-rdkit-core, so this digest is always at best the PREVIOUS run's
+    # (or, for a brand-new pair, empty on the very first run). A newly added
+    # pair therefore builds twice before converging: run N publishes the
+    # runtime image under a key with an empty core digest (K0) and
+    # build-rdkit-core pushes the core for the first time; run N+1 resolves
+    # the now-published digest, computes a different key (K1), finds no
+    # `K1` tag yet, and rebuilds once more; run N+2 resolves the same
+    # (provenance: false, so byte-stable) digest again, computes K1 again,
+    # finds it already built, and converges. This is accepted, not a bug to
+    # chase -- see Ruling 45.
     core_digest=""
     if [ "${SKIP_REGISTRY_CHECK:-}" != "1" ]; then
+        : "${IMAGE_REPO:?IMAGE_REPO is required unless SKIP_REGISTRY_CHECK=1}"
         core_ref="${IMAGE_REPO%/*}/rdkit-core:${rdkit}-${suite}"
-        core_digest=$(docker buildx imagetools inspect "$core_ref" --format '{{json .Manifest}}' 2>/dev/null \
-            | python3 -c 'import json,sys; print(json.load(sys.stdin).get("digest",""))' 2>/dev/null || echo "")
+        # `if var=$(cmd)` (not a bare `var=$(cmd)`), so a nonzero exit from
+        # `docker` here does not trip `set -e` before `$?` can be read -- a
+        # bare assignment's exit status IS the command substitution's exit
+        # status, and set -e aborts the script on it immediately outside a
+        # conditional, before the `elif` below ever runs.
+        if core_inspect_output=$(docker buildx imagetools inspect "$core_ref" --format '{{json .Manifest}}' 2>&1); then
+            core_inspect_rc=0
+        else
+            core_inspect_rc=$?
+        fi
+        if [ "$core_inspect_rc" -eq 0 ]; then
+            core_digest=$(printf '%s' "$core_inspect_output" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("digest",""))')
+        elif printf '%s' "$core_inspect_output" | grep -qiE 'not found|no such manifest|manifest unknown|name unknown|name_unknown'; then
+            core_digest=""
+        else
+            echo "ERROR: rdkit-core digest lookup failed for ${core_ref}:" >&2
+            printf '%s\n' "$core_inspect_output" >&2
+            exit 1
+        fi
     fi
 
     key=$("${here}/build_key.sh" \

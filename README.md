@@ -79,7 +79,7 @@ make runtime POSTGRES=15    RDKIT=2025_09_6 DEBIAN=trixie
 make test    POSTGRES=17.11 RDKIT=2026_03_6
 ```
 
-`POSTGRES` accepts a major (`17`, which resolves to the current point release at build time) or a point release (`17.11`, which pins an immutable base image). Run `make help` to see the full target and variable surface: targets `build runtime test test-build test-runtime smoke labels test-scripts clean`, and variables `POSTGRES`, `RDKIT`, `DEBIAN`, `DESCRIPTORS3D` (defaults come from `versions.json`, so a bare `make runtime` builds the pair that gets the `latest` tag). `make smoke` runs this project's functional smoke test against a built runtime image; `make test-scripts` runs this repo's own shell/Python test suite under `tests/` and does not need Docker; `make clean` clears the `.make/` cache that memoizes `scripts/resolve_pg.sh`'s network lookups.
+`POSTGRES` accepts a major (`17`, which resolves to the current point release at build time) or a point release (`17.11`, which pins an immutable base image). Run `make help` to see the full target and variable surface: targets `core build runtime test test-build test-runtime smoke labels test-scripts clean`, and variables `POSTGRES`, `RDKIT`, `DEBIAN`, `DESCRIPTORS3D` (defaults come from `versions.json`, so a bare `make runtime` builds the pair that gets the `latest` tag). `make core` builds the PostgreSQL-independent RDKit compile (`Dockerfile.rdkit-core`) that every other target depends on, shared across every `POSTGRES` value for the same `RDKIT`/`DEBIAN` -- `build`/`runtime`/`test-build`/`test-runtime` all run it as a prerequisite, so it is rarely invoked directly. `make smoke` runs this project's functional smoke test against a built runtime image; `make test-scripts` runs this repo's own shell/Python test suite under `tests/` and does not need Docker; `make clean` clears the `.make/` cache that memoizes `scripts/resolve_pg.sh`'s network lookups.
 
 ### Which RDKit releases build
 
@@ -97,12 +97,13 @@ The releases marked "no" fail a roughly 20-minute compile at around 77% -- an up
 
 ```bash
 make runtime RDKIT=2025_03_6 DESCRIPTORS3D=ON
-docker build -t <tag> --build-arg rdkit_version=2025_03_6 --build-arg rdk_build_descriptors3d=ON .
 ```
+
+`make runtime ... DESCRIPTORS3D=ON` builds a distinctly-tagged core image (`rdkit-core:<rdkit>-<debian>-d3d`, not the shared `rdkit-core:<rdkit>-<debian>` every other build uses) and points the runtime build at it automatically -- this is now required, not optional: since the PostgreSQL-independent core compile (`Dockerfile.rdkit-core`) hardcodes `RDK_BUILD_DESCRIPTORS3D=OFF` by default, a `docker build` of the main `Dockerfile` with `--build-arg rdk_build_descriptors3d=ON` alone reconfigures against an OFF-compiled tree and still fails the same way. To do this with `docker build` directly (see build arguments below), you must ALSO build `Dockerfile.rdkit-core` yourself with `--build-arg rdk_build_descriptors3d=ON` and point `--build-arg rdkit_core_image=<that tag>` at it; `make` does both steps for you.
 
 Turning it on pulls the 3D-descriptor subsystem and its tests into the build, producing a larger `rdkit.so` (linked statically, `RDK_PGSQL_STATIC=ON`) and a longer build.
 
-To invoke `docker build` directly:
+To invoke `docker build` directly: since R7, the main `Dockerfile`'s builder stage starts `FROM` a separately-built, PostgreSQL-independent RDKit compile (`Dockerfile.rdkit-core`) rather than cloning and compiling RDKit itself, so a bare invocation needs that image to exist somewhere `rdkit_core_image` can resolve. The default points at this project's own published `ghcr.io/radusuciu/docker-postgres-rdkit/rdkit-core:<rdkit>-<debian>`, which requires network access and only exists for pairs the automatic matrix (or a `workflow_dispatch`) has actually built; `make`'s targets instead always build and consume a local `rdkit-core` image first (see `make core`, above), which is what you want for a fork or an unpublished pair:
 
 ```bash
 docker build -t <your_tag> \
@@ -118,6 +119,7 @@ Build arguments:
 * `postgres_major_version`: the major version of PostgreSQL. Formatted like `17`.
 * `postgres_point_version`: optional, labels only. Formatted like `17.11`.
 * `postgres_base_image`: optional; defaults to `docker.io/postgres:<major>-<suite>`. Set it to pin a point release or a digest.
+* `rdkit_core_image`: optional; defaults to `ghcr.io/radusuciu/docker-postgres-rdkit/rdkit-core:<rdkit_version>-<debian_version>`. The PostgreSQL-independent RDKit compile the builder stage reuses (R7, `Dockerfile.rdkit-core`). Set it to a locally-built tag (what `make` does) to avoid a network pull, or to point at a `DESCRIPTORS3D=ON` core (see above).
 * `rdkit_version`: an RDKit release tag suffix. Formatted like `2026_03_6`.
 * `rdk_build_descriptors3d`: optional, defaults to `OFF`. Set to `ON` to build the RDKit releases in the table above that need it.
 
