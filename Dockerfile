@@ -10,7 +10,6 @@ ARG INSTALL_DIR=/opt/rdkit
 ARG CMAKE_VERSION=3.28.3
 ARG CMAKE_INSTALL_DIR=/opt/cmake
 ARG NUM_BUILD_CORES=4
-ARG MAKEFLAGS='-j${NUM_BUILD_CORES}'
 ARG DEBIAN_FRONTEND=noninteractive
 
 
@@ -26,7 +25,7 @@ ARG BUILD_DIR
 ARG INSTALL_DIR
 ARG CMAKE_VERSION
 ARG CMAKE_INSTALL_DIR
-ARG MAKEFLAGS
+ARG NUM_BUILD_CORES
 ARG DEBIAN_FRONTEND
 
 # pgdg is needed for the -dev packages matching this image's server version.
@@ -100,7 +99,6 @@ RUN --mount=type=cache,target=/tmp/rdkit-build,id=rdkit-build,uid=999,gid=999 \
     -D RDK_USE_URF=OFF \
     -D RDK_BUILD_PGSQL=ON \
     -D RDK_PGSQL_STATIC=ON \
-    # -D Boost_USE_STATIC_LIBS=ON \
     -D PostgreSQL_CONFIG=pg_config \
     -D PostgreSQL_INCLUDE_DIR=`pg_config --includedir` \
     -D PostgreSQL_TYPE_INCLUDE_DIR=`pg_config --includedir-server` \
@@ -112,10 +110,18 @@ RUN --mount=type=cache,target=/tmp/rdkit-build,id=rdkit-build,uid=999,gid=999 \
     -B ${BUILD_DIR}
 
 WORKDIR ${BUILD_DIR}
+# -j${NUM_BUILD_CORES} on the command line, not via a MAKEFLAGS ARG: Docker
+# does not expand ${...} references inside another ARG's default value (only
+# inside RUN/etc. instruction text), so `ARG MAKEFLAGS='-j${NUM_BUILD_CORES}'`
+# reached the shell as the literal string "-j${NUM_BUILD_CORES}" -- which GNU
+# make parses as bare `-j`, i.e. unlimited parallel jobs, not the throttled
+# value this Dockerfile is supposed to enforce. Passing -j on the command
+# line also gives nested `make` invocations a real shared jobserver, which
+# the environment-variable form never provided.
 RUN --mount=type=cache,target=/tmp/rdkit-build,id=rdkit-build,uid=999,gid=999 \
-    make
+    make -j${NUM_BUILD_CORES}
 RUN --mount=type=cache,target=/tmp/rdkit-build,id=rdkit-build,uid=999,gid=999 \
-    make install
+    make -j${NUM_BUILD_CORES} install
 
 # pgsql_install.sh copies into /usr/share/postgresql/.../extension and
 # /usr/lib/postgresql/.../lib, both root:root 0755 in the base image --
@@ -166,8 +172,22 @@ USER postgres
 # a renamed test, a future RDKit reshuffle) silently exits 0 having run
 # zero tests. This flag is what makes "the suite ran" a checked property
 # instead of an assumption.
+#
+# PRECONDITION this RUN depends on and cannot itself verify: the cache mount
+# must actually be warm. Cache-mount contents never enter an image layer, so
+# they don't travel with BuildKit's layer cache the way COPY/RUN outputs do.
+# Within one build this is safe -- builder populates the mount and this
+# stage reads it back in the same invocation. The failure mode is a *layer*-
+# cache hit on builder's make/make install steps (e.g. a restored CI cache)
+# combined with an empty or pruned `id=rdkit-build` cache mount: make is
+# skipped as a cache hit, the mount stays empty, and this RUN fails on a
+# missing CTestTestfile.cmake. If that happens, the `--no-tests=error`
+# failure here means "the build cache and the cache mount fell out of sync,"
+# not "the code broke" -- check whether Task 14's CI cache export/import
+# carries the cache mount alongside the layer cache before assuming a
+# regression.
 WORKDIR ${BUILD_DIR}
-RUN --mount=type=cache,target=/tmp/rdkit-build,id=rdkit-build,uid=999,gid=999 \
+RUN --mount=type=cache,target=/tmp/rdkit-build,id=rdkit-build,uid=999,gid=999,sharing=locked \
     initdb -D /tmp/pgdata \
   && pg_ctl -D /tmp/pgdata -l /tmp/pgdata/log.txt start \
   && RDBASE="${SOURCE_DIR}" LD_LIBRARY_PATH="${BUILD_DIR}/lib" ctest --no-tests=error -j${NUM_BUILD_CORES} --output-on-failure -E testRascalMCES
@@ -188,7 +208,12 @@ COPY --from=builder /usr/lib/postgresql/${PG_MAJOR_VERSION}/lib/rdkit.so /usr/li
 COPY --from=builder /tmp/runtime-packages.txt /tmp/runtime-packages.txt
 COPY ./enable_extension.sql /docker-entrypoint-initdb.d/
 
+# test -s guards against an empty runtime-packages.txt: `xargs` (even with
+# -r) exits 0 on empty input, which would otherwise let a broken/empty
+# derived package list produce a green build of an image missing its
+# dependencies.
 RUN apt-get update \
+    && test -s /tmp/runtime-packages.txt \
     && xargs -a /tmp/runtime-packages.txt apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/runtime-packages.txt
@@ -197,9 +222,10 @@ LABEL org.opencontainers.image.source=https://github.com/radusuciu/docker-postgr
 
 
 ################################################################################
-# Just for safety, I like to run the tests again in the runtime image since
-# the runtime dependencies are different from those that we had installed
-# during the build
+# Verifies the runtime image's derived package set (R3) is sufficient to
+# load and exercise the RDKit cartridge inside a real postgres server. This
+# runs one test, testPgSQL, not the full RDKit suite -- see the comment
+# above the RUN below for why.
 ################################################################################
 FROM runtime AS test-runtime
 ARG SOURCE_DIR
@@ -234,6 +260,16 @@ ENV PATH=${CMAKE_INSTALL_DIR}/bin:$PATH
 # mounts are keyed by id at the daemon level, not by stage, so the same
 # id=rdkit-build cache still has the compiled build tree in it.
 #
+# PRECONDITION this RUN depends on and cannot itself verify: the cache mount
+# must actually be warm. Cache-mount contents never enter an image layer, so
+# they don't travel with BuildKit's layer cache the way COPY/RUN outputs do
+# -- a *layer*-cache hit on builder's make/make install steps (e.g. a
+# restored CI cache) combined with an empty or pruned `id=rdkit-build` cache
+# mount means make never actually ran to populate ${BUILD_DIR}, and this RUN
+# fails on a missing CTestTestfile.cmake. If that happens, treat it as "the
+# build cache and the cache mount fell out of sync" -- check Task 14's CI
+# cache export/import for the cache mount, not as a code regression.
+#
 # No trailing "; exit 0": a failure in initdb/pg_ctl/ctest must fail this
 # RUN. pg_ctl stop still runs via the trap-like sequencing below so a running
 # postmaster doesn't get orphaned, but the captured ctest/setup exit status
@@ -246,7 +282,7 @@ ENV PATH=${CMAKE_INSTALL_DIR}/bin:$PATH
 # -R filter selecting only testPgSQL, an -E exclusion of a different test
 # is redundant dead weight.
 WORKDIR ${BUILD_DIR}
-RUN --mount=type=cache,target=/tmp/rdkit-build,id=rdkit-build,uid=999,gid=999 \
+RUN --mount=type=cache,target=/tmp/rdkit-build,id=rdkit-build,uid=999,gid=999,sharing=locked \
     initdb -D /tmp/pgdata \
   && pg_ctl -D /tmp/pgdata -l /tmp/pgdata/log.txt start \
   && RDBASE="${SOURCE_DIR}" LD_LIBRARY_PATH="${BUILD_DIR}/lib" ctest --no-tests=error -R '^testPgSQL$' --output-on-failure; \
