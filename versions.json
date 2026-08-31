@@ -1,6 +1,6 @@
 {
   "debian": "bookworm",
   "postgres_majors": ["14", "15", "16", "17", "18"],
-  "rdkit_versions": ["2025_09_2", "2025_03_6"],
+  "rdkit_versions": ["2026_03_6", "2025_09_6"],
   "exclude": []
 }

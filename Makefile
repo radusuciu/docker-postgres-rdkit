@@ -1,16 +1,14 @@
 .PHONY: build runtime test test-build test-runtime test-scripts
 
-DEBIAN_VERSION ?= bookworm
-PG_IMAGE_TAG ?= 17.2
-PG_MAJOR_VERSION ?= 17
-RDKIT_VERSION ?= 2024_09_5
+DEBIAN ?= bookworm
+PG_MAJOR ?= 17
+RDKIT ?= 2026_03_6
 
-IMAGE_TAG = postgres-rdkit:pg$(PG_IMAGE_TAG)-rdkit-$(RDKIT_VERSION)
+IMAGE_TAG = postgres-rdkit:postgres-$(PG_MAJOR)-rdkit-$(RDKIT)
 BUILD_ARGS = \
-	--build-arg debian_version=$(DEBIAN_VERSION) \
-	--build-arg PG_IMAGE_TAG=$(PG_IMAGE_TAG) \
-	--build-arg PG_MAJOR_VERSION=$(PG_MAJOR_VERSION) \
-	--build-arg RDKIT_VERSION=$(RDKIT_VERSION)
+	--build-arg debian_version=$(DEBIAN) \
+	--build-arg postgres_major_version=$(PG_MAJOR) \
+	--build-arg rdkit_version=$(RDKIT)
 
 build:
 	docker build \
