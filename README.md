@@ -2,7 +2,7 @@
 
 # docker-postgres-rdkit
 
-This project creates PostgreSQL docker images with the RDKit cartridge built and installed. GitHub actions are used to detect when new versions of either PostgreSQL or RDKit are released. Additionally, the version of `libboost` that is used is selected to match the version that the `rdkit` PyPI package is built with. Images are made pushed to the GitHub Container Registry (GHCR).
+This project creates PostgreSQL docker images with the RDKit cartridge built and installed. A single `main` branch and a declarative matrix in `versions.json` drive the builds; GitHub Actions rebuilds the matrix daily and skips anything whose inputs have not changed. Images are pushed to the GitHub Container Registry (GHCR).
 
 The image is based on the Dockerfile by [rvianello](https://github.com/rvianello/docker-postgres-rdkit/blob/master/Dockerfile).
 
@@ -14,7 +14,27 @@ Assuming you have docker installed, you can pull the image using:
 docker pull ghcr.io/radusuciu/docker-postgres-rdkit/postgres-rdkit:<tag>
 ```
 
-Tags follow the format `postgres-<pgversion>-rdkit-<rdkitversion>`, for example, postgres-15-rdkit-2023_03_2. You can find the available tags on the "Releases" page of this GitHub repository. Each release also has a corresponding branch in this repository.
+Tags follow these rules. For the default Debian suite (the `debian` key in `versions.json`, currently `bookworm`):
+
+| Tag | Meaning |
+| --- | --- |
+| `postgres-<pg_point>-rdkit-<rdkit>` | Reproducible pin, e.g. `postgres-17.11-rdkit-2026_03_6`. |
+| `postgres-<pg_major>-rdkit-<rdkit>-<build_key>` | Immutable; dedup/provenance. |
+| `postgres-<pg_major>-rdkit-<rdkit>` | Moving; pushed only when the build's point release is the current one for that major. |
+| `latest` | Only the newest (RDKit, PostgreSQL) pair, and only when it is current. |
+
+For a build of any other Debian suite, the point tag gains a `-<suite>` suffix, and no moving major tag and no `latest` are pushed:
+
+| Tag | Meaning |
+| --- | --- |
+| `postgres-<pg_point>-rdkit-<rdkit>-<suite>` | Reproducible pin for that suite. |
+| `postgres-<pg_major>-rdkit-<rdkit>-<build_key>` | Immutable; dedup/provenance. |
+
+This is deliberate: an on-demand build must never re-point a tag the automatic matrix owns. The automatic matrix itself is single-suite, so a non-default suite is only reachable through `make ... DEBIAN=<suite>` locally or the `Build images` workflow's `debian` `workflow_dispatch` input.
+
+You can find the available tags on the "Releases" page of this GitHub repository.
+
+Every image also carries provenance labels -- notably `org.rdkit.pickle-version`, which is the actual client/server compatibility contract: your client's RDKit must be at least the cartridge's RDKit, or a newer pickle format will be read with only a warning and produce corrupt results. Inspect the labels with `docker image inspect --format '{{json .Config.Labels}}' <image>`.
 
 To run the Docker container, use:
 
@@ -27,13 +47,18 @@ Replace <tag> with the version tag of the Docker image.
 ## Available Versions
 
 <!-- start automatically generated version matrix -->
-| PostgreSQL | RDKit | Boost |
+| PostgreSQL | RDKit | Tag |
 | --- | --- | --- |
-| 14.8 | 2022_03_3 | 1.74 |
-| 14.8 | 2022_03_4 | 1.74 |
-| 14.8 | 2023_03_2 | 1.78 |
-| 15.2 | 2023_03_1 | 1.78 |
-| 15.3 | 2023_03_2 | 1.78 |
+| 18.6 | 2026_03_6 | `postgres-18-rdkit-2026_03_6` |
+| 17.11 | 2026_03_6 | `postgres-17-rdkit-2026_03_6` |
+| 16.15 | 2026_03_6 | `postgres-16-rdkit-2026_03_6` |
+| 15.19 | 2026_03_6 | `postgres-15-rdkit-2026_03_6` |
+| 14.24 | 2026_03_6 | `postgres-14-rdkit-2026_03_6` |
+| 18.6 | 2025_09_6 | `postgres-18-rdkit-2025_09_6` |
+| 17.11 | 2025_09_6 | `postgres-17-rdkit-2025_09_6` |
+| 16.15 | 2025_09_6 | `postgres-16-rdkit-2025_09_6` |
+| 15.19 | 2025_09_6 | `postgres-15-rdkit-2025_09_6` |
+| 14.24 | 2025_09_6 | `postgres-14-rdkit-2025_09_6` |
 <!-- end automatically generated version matrix -->
 
 ## Configuration
@@ -44,20 +69,59 @@ For details on use of the rdkit cartridge, refer to the [rdkit docs on the matte
 
 ## Building the Docker Image
 
-This project uses GitHub Actions to automatically build a new Docker image when new versions of PostgreSQL, RDKit or Boost are released. The workflow file that controls this process is `.github/workflows/check_versions.yml`. It checks for new versions of these components daily, and if it finds any new versions, it creates a new branch, and updates the Dockerfile if a new version of boost is found (rdkit and postgres versions are handled as build-args). A separate workflow, `github/workflows/build_and_push` builds and pushes new images, extracting rdkit and postgres versions from the branch name.
+Builds are driven by `versions.json`, which declares the Debian suite, the PostgreSQL majors and the RDKit releases that are rebuilt automatically by the `Build images` GitHub Actions workflow. A single-line edit to that file adds or removes a pair; nothing else changes.
 
-If you want to build the Docker image manually, you can use the following command:
+Any (PostgreSQL, RDKit) pair can also be built on demand without editing `versions.json`, either through the `Build images` workflow's `workflow_dispatch` inputs or locally with `make`:
 
 ```bash
-docker build -t <your_tag> --build-arg postgres_image_version=<pg_version> --build-arg postgres_major_version=<pg_major_version> --build-arg rdkit_git_ref=Release_<rdkit_version> .
+make runtime POSTGRES=17.11 RDKIT=2026_03_6
+make runtime POSTGRES=15    RDKIT=2025_09_6 DEBIAN=trixie
+make test    POSTGRES=17.11 RDKIT=2026_03_6
 ```
 
-When building the Docker image, you can specify several parameters, including:
+`POSTGRES` accepts a major (`17`, which resolves to the current point release at build time) or a point release (`17.11`, which pins an immutable base image). Run `make help` to see the full target and variable surface: targets `build runtime test test-build test-runtime smoke labels test-scripts clean`, and variables `POSTGRES`, `RDKIT`, `DEBIAN`, `DESCRIPTORS3D` (defaults come from `versions.json`, so a bare `make runtime` builds the pair that gets the `latest` tag). `make smoke` runs this project's functional smoke test against a built runtime image; `make test-scripts` runs this repo's own shell/Python test suite under `tests/` and does not need Docker; `make clean` clears the `.make/` cache that memoizes `scripts/resolve_pg.sh`'s network lookups.
 
-* `postgres_image_version`: The version of the PostgreSQL image to use. Formatted like: `14.8`.
-* `postgres_major_version`: The major version of PostgreSQL. Formatted like: `15`.
-* `rdkit_git_ref`: The version of RDKit to use. This should correspond to a GitHub release tag of the RDKit project. Formatted like: `Release_2023_03_3`.
-* `boost_version`: Optional. The version of `libboost` to use. Formatted like `1.74` or `1.74.0`.
+### Which RDKit releases build
+
+Not every RDKit release compiles cleanly with this Dockerfile's default configuration (`RDK_BUILD_DESCRIPTORS3D=OFF`, `RDK_BUILD_CHEMDRAW_SUPPORT=OFF`, `RDK_BUILD_INCHI_SUPPORT=ON`):
+
+| RDKit release | builds with the defaults? | note |
+| --- | --- | --- |
+| 2023_09_6, 2024_09_5 | yes | |
+| 2025_03_1 … 2025_03_6 | **no** | unguarded `Descriptors::GETAWAY` in `Code/GraphMol/Descriptors/catch_tests.cpp` |
+| 2025_09_1, 2025_09_2 | **no** | same, plus `Code/Bench/inchi.cpp` |
+| 2025_09_3 and newer | yes | upstream guarded the GETAWAY calls |
+| 2026_03_* | yes | |
+
+The releases marked "no" fail a roughly 20-minute compile at around 77% -- an upstream test-file defect in those specific releases, not a defect in this image. The escape hatch is the `DESCRIPTORS3D` Makefile variable (`rdk_build_descriptors3d` build arg), which defaults to `OFF` -- identical to the value this project always hardcoded, so every automatic matrix build and every bare `docker build .` is unaffected:
+
+```bash
+make runtime RDKIT=2025_03_6 DESCRIPTORS3D=ON
+docker build -t <tag> --build-arg rdkit_version=2025_03_6 --build-arg rdk_build_descriptors3d=ON .
+```
+
+Turning it on pulls the 3D-descriptor subsystem and its tests into the build, producing a larger `rdkit.so` (linked statically, `RDK_PGSQL_STATIC=ON`) and a longer build.
+
+To invoke `docker build` directly:
+
+```bash
+docker build -t <your_tag> \
+  --build-arg debian_version=bookworm \
+  --build-arg postgres_major_version=17 \
+  --build-arg rdkit_version=2026_03_6 \
+  .
+```
+
+Build arguments:
+
+* `debian_version`: the Debian suite of the base image. Formatted like `bookworm`.
+* `postgres_major_version`: the major version of PostgreSQL. Formatted like `17`.
+* `postgres_point_version`: optional, labels only. Formatted like `17.11`.
+* `postgres_base_image`: optional; defaults to `docker.io/postgres:<major>-<suite>`. Set it to pin a point release or a digest.
+* `rdkit_version`: an RDKit release tag suffix. Formatted like `2026_03_6`.
+* `rdk_build_descriptors3d`: optional, defaults to `OFF`. Set to `ON` to build the RDKit releases in the table above that need it.
+
+There is no build argument that selects a Boost version. The Boost package family is chosen at build time from RDKit's own declared floor (`RDK_BOOST_VERSION`), picking the lowest family in the suite that satisfies it. If no family satisfies the floor, the build fails with a message naming the floor and listing what the suite offers; the fix is to raise `debian` in `versions.json`.
 
 ## Credits and other projects
 
