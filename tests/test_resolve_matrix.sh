@@ -62,6 +62,63 @@ assert_eq "bullseye" "$(jqlike "$out" 'd[0]["debian"]')" "debian override reache
 assert_eq "$bullseye_digest" "$(jqlike "$out" 'd[0]["postgres_base_digest"]')" \
     "debian override reaches resolve_pg.sh (base digest is bullseye's, not bookworm's)"
 
+echo "--- dispatch mode validates DISPATCH_RDKIT / DISPATCH_DEBIAN (Ruling 39) ---"
+# "a valid value passes" is already covered above: every dispatch-mode test
+# so far used DISPATCH_RDKIT=2023_09_6 (and DISPATCH_DEBIAN=bullseye) and
+# succeeded. These cases cover rejection, including the embedded-newline
+# case Ruling 39 calls out by name -- the exact value that could otherwise
+# close the workflow's $GITHUB_OUTPUT heredoc early. PG_FIXTURE_DIR is passed
+# to every case (even though a correctly-rejecting script never reaches it)
+# so that if the validation ever regresses away, the fallback path still
+# can't reach the live network.
+#
+# assert_rejects_with (not a bare assert_fails) is deliberate: I mutation-
+# tested this by temporarily deleting the new validation block and re-running
+# this file. The two DISPATCH_RDKIT cases below correctly flipped to FAIL, as
+# expected -- but the two DISPATCH_DEBIAN cases kept passing anyway, because
+# an unvalidated DISPATCH_DEBIAN still makes resolve_pg.sh's PG_FIXTURE_DIR
+# lookup fail on its own (no fixture file matches a mangled suite name), so
+# the script still exited non-zero for an UNRELATED reason. A bare exit-code
+# check on those two would therefore have passed even with the validation
+# deleted -- exactly what Ruling 39 says not to write. Matching each
+# rejection's specific error text pins every assertion to the guard actually
+# added for Ruling 39, not to an incidental downstream failure.
+assert_rejects_with() {
+    local desc="$1" expected_msg="$2"; shift 2
+    TESTS_RUN=$((TESTS_RUN + 1))
+    local out rc
+    out=$("$@" 2>&1); rc=$?
+    if [ "$rc" -eq 0 ]; then
+        _fail "$desc (command unexpectedly succeeded)"
+    elif printf '%s' "$out" | grep -qF -- "$expected_msg"; then
+        pass "$desc"
+    else
+        _fail "$desc (failed, but not with the expected message)"
+        printf '  expected to contain: %s\n  actual output: %s\n' "$expected_msg" "$out" >&2
+    fi
+}
+
+assert_rejects_with "rdkit with an embedded newline is rejected" \
+    "is not a valid RDKit release tag" \
+    env DISPATCH_POSTGRES=17 "DISPATCH_RDKIT=$(printf '2023_09_6\nEXTRA=malicious')" \
+        PG_FIXTURE_DIR="${REPO_ROOT}/tests/fixtures/registry" "$RESOLVE"
+
+assert_rejects_with "rdkit with a non-matching shape is rejected" \
+    "is not a valid RDKit release tag" \
+    env DISPATCH_POSTGRES=17 DISPATCH_RDKIT="not-a-version" \
+        PG_FIXTURE_DIR="${REPO_ROOT}/tests/fixtures/registry" "$RESOLVE"
+
+assert_rejects_with "debian with an embedded newline is rejected" \
+    "is not a valid Debian suite name" \
+    env DISPATCH_POSTGRES=17 DISPATCH_RDKIT=2023_09_6 \
+        "DISPATCH_DEBIAN=$(printf 'bookworm\nEXTRA=malicious')" \
+        PG_FIXTURE_DIR="${REPO_ROOT}/tests/fixtures/registry" "$RESOLVE"
+
+assert_rejects_with "debian with disallowed characters is rejected" \
+    "is not a valid Debian suite name" \
+    env DISPATCH_POSTGRES=17 DISPATCH_RDKIT=2023_09_6 DISPATCH_DEBIAN="Bookworm2" \
+        PG_FIXTURE_DIR="${REPO_ROOT}/tests/fixtures/registry" "$RESOLVE"
+
 echo "--- output always parses as a JSON list ---"
 out=$(DISPATCH_POSTGRES=17.9 DISPATCH_RDKIT=2023_09_6 \
       PG_FIXTURE_DIR="${REPO_ROOT}/tests/fixtures/registry" "$RESOLVE")

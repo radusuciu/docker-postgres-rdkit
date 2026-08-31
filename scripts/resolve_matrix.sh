@@ -9,8 +9,11 @@
 #   IMAGE_REPO           registry path used for the existence check
 #   VERSIONS_FILE        defaults to versions.json
 #   DISPATCH_POSTGRES    on-demand: a major or point release
-#   DISPATCH_RDKIT       on-demand: an RDKit release tag suffix
-#   DISPATCH_DEBIAN      on-demand: suite override, defaults to versions.json
+#   DISPATCH_RDKIT       on-demand: an RDKit release tag suffix, validated
+#                         against ^[0-9]{4}_[0-9]{2}_[0-9]+$ (Ruling 39)
+#   DISPATCH_DEBIAN      on-demand: suite override, validated against
+#                         ^[a-z]+$ when set (Ruling 39); defaults to
+#                         versions.json
 #   SKIP_REGISTRY_CHECK  set to 1 to skip the "already built?" lookup
 #
 # Prints a JSON array to stdout; progress to stderr.
@@ -23,6 +26,23 @@ default_debian=$("${here}/matrix.py" --file "$versions_file" --format debian)
 
 if [ -n "${DISPATCH_POSTGRES:-}" ]; then
     : "${DISPATCH_RDKIT:?DISPATCH_RDKIT is required when DISPATCH_POSTGRES is set}"
+
+    # DISPATCH_POSTGRES is validated downstream by resolve_pg.sh's own ref
+    # check; DISPATCH_RDKIT and DISPATCH_DEBIAN have no such downstream gate,
+    # so an unvalidated workflow_dispatch value would flow straight into an
+    # image tag and into the "Compute tags" step's $GITHUB_OUTPUT heredoc
+    # body (Ruling 39). Rejecting anything outside the expected shape here --
+    # where dispatch values enter the system -- also rules out an embedded
+    # newline, which could otherwise close a fixed-delimiter heredoc early.
+    if [[ ! "$DISPATCH_RDKIT" =~ ^[0-9]{4}_[0-9]{2}_[0-9]+$ ]]; then
+        echo "ERROR: '${DISPATCH_RDKIT}' is not a valid RDKit release tag (expected YYYY_MM_N, e.g. 2026_03_6)" >&2
+        exit 1
+    fi
+    if [ -n "${DISPATCH_DEBIAN:-}" ] && [[ ! "$DISPATCH_DEBIAN" =~ ^[a-z]+$ ]]; then
+        echo "ERROR: '${DISPATCH_DEBIAN}' is not a valid Debian suite name (expected lowercase letters, e.g. bookworm)" >&2
+        exit 1
+    fi
+
     export _PG="$DISPATCH_POSTGRES" _RDKIT="$DISPATCH_RDKIT" \
            _DEBIAN="${DISPATCH_DEBIAN:-$default_debian}"
     entries=$(python3 -c '

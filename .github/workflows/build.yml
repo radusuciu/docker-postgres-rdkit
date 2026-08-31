@@ -133,29 +133,37 @@ jobs:
       # that `make`/`make install`/`pgsql_install.sh` populate lives in the
       # BuildKit daemon's local cache storage, not in any image layer, so it
       # is NOT carried by `cache-from: type=gha` the way layer cache is.
-      # `setup-buildx-action` creates a brand-new builder (and therefore a
-      # cold, empty cache mount) on every job -- including a "re-run failed
-      # jobs" re-run, which GitHub Actions always restarts as a whole new
-      # runner from step 1, never mid-job. So the FIRST time this job's
-      # builder touches the `builder` stage is always right here, in this
-      # step. Without `no-cache-filters`, a `cache-from: type=gha` hit
+      # GitHub-hosted runners are ALWAYS ephemeral -- no job attempt,
+      # retriggered run, or "re-run failed jobs" click ever reuses a prior
+      # runner's disk -- so `setup-buildx-action` hands every single job a
+      # brand-new builder with a cold, empty cache mount, full stop. This is
+      # not a narrow "re-run" case: an ordinary cron pickup of an entry a
+      # PREVIOUS run attempted but never pushed (or simply a different day's
+      # run against the same CACHE_SCOPE) is exactly as exposed, because the
+      # FIRST time any given job's builder ever touches the `builder` stage
+      # is always right here, in this step, regardless of why the job is
+      # running. Without `no-cache-filters`, a `cache-from: type=gha` hit
       # restored from an EARLIER run's export (same Dockerfile, same
       # build-args -> same cache key) would make BuildKit treat `make`/`make
       # install`/`pgsql_install.sh` as already-done and skip executing them
-      # -- leaving this job's cache mount empty even though the layer cache
+      # -- leaving THIS job's cache mount empty even though the layer cache
       # says "done". `test-build` and `test-runtime` (below) would then fail
       # on a missing CTestTestfile.cmake, and re-running would reproduce the
       # same false hit every time. `--no-cache-filter builder` (passed via
       # this input) disables cache lookups for exactly that stage, forcing
       # its RUN instructions to actually execute on every job, which
       # guarantees the mount is genuinely populated before any later step
-      # reads it. The steps below this one deliberately do NOT repeat this
-      # flag: they run in the same buildx builder/daemon this step just
-      # populated for real, so their own cache lookups hit *local* state
-      # (which BuildKit always consults before any remote import) and
-      # correctly see a warm mount -- forcing them too would only pay the
-      # no-op-recompile cost (or, on a genuinely cold mount, the same
-      # unavoidable full-recompile cost) redundantly, four more times.
+      # reads it. Because no runner ever legitimately has a warm mount to
+      # begin with, this costs nothing beyond what correctness already
+      # demanded -- do NOT try to narrow it with `github.run_attempt > 1` or
+      # similar; there is no case where skipping it is safe. The steps below
+      # this one deliberately do NOT repeat this flag: they run in the same
+      # buildx builder/daemon this step just populated for real, so their
+      # own cache lookups hit *local* state (which BuildKit always consults
+      # before any remote import) and correctly see a warm mount -- forcing
+      # them too would only pay the no-op-recompile cost (or, on a genuinely
+      # cold mount, the same unavoidable full-recompile cost) redundantly,
+      # four more times.
       - name: Build runtime image (no push)
         uses: docker/build-push-action@v6
         with:
@@ -243,7 +251,18 @@ jobs:
         run: scripts/smoke_test.sh local/postgres-rdkit:candidate
 
       - name: Report image size
-        # Observational only; nothing fails on it (SPEC R3).
+        # Observational only; nothing fails on it (SPEC R3). `docker pull` is
+        # a live Docker Hub call under `bash -eo pipefail` (GitHub Actions'
+        # default for `run:` steps), so without continue-on-error a Docker
+        # Hub rate limit or blip here would abort the job at this line --
+        # discarding a build that already passed compile, test-build,
+        # test-runtime and the R8 smoke test, before "Compute tags" and
+        # "Build and push" ever run -- for a reason unrelated to whether the
+        # image is correct (Ruling 38). Kept rather than dropped: buildx does
+        # not necessarily populate the local daemon's image store with the
+        # base image, so removing the pull could make the size report
+        # silently wrong instead of just occasionally skipped.
+        continue-on-error: true
         run: |
           docker image inspect local/postgres-rdkit:candidate --format 'built: {{.Size}} bytes'
           docker pull -q "${{ matrix.entry.postgres_base_image }}"
@@ -300,10 +319,19 @@ jobs:
             add "postgres-${PG_MAJOR}-rdkit-${RDKIT}-${BUILD_KEY}"
           fi
 
+          # A fixed heredoc delimiter (e.g. a literal `TAGS_EOF`) is only safe
+          # against $GITHUB_OUTPUT's multiline format if it cannot appear as
+          # a standalone line inside the value. RDKIT reaches this step from
+          # workflow_dispatch's `rdkit` input; resolve_matrix.sh now rejects
+          # anything that isn't ^[0-9]{4}_[0-9]{2}_[0-9]+$ (Ruling 39), which
+          # already rules out an embedded newline -- but a random delimiter
+          # is cheap belt-and-braces against the same class of bug in any
+          # value that ever flows into this heredoc, validated or not.
+          delimiter="TAGS_EOF_$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
           {
-            echo 'tags<<TAGS_EOF'
+            echo "tags<<${delimiter}"
             printf '%s\n' "$tags"
-            echo 'TAGS_EOF'
+            echo "${delimiter}"
           } >> "$GITHUB_OUTPUT"
           printf 'Tags:\n%s\n' "$tags"
 
