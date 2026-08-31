@@ -17,7 +17,23 @@
 #   SKIP_REGISTRY_CHECK  set to 1 to skip the "already built?" lookup
 #
 # Prints a JSON array to stdout; progress to stderr.
+#
+# --cores: print the distinct {rdkit, debian} pairs the resolved entries need
+# a PostgreSQL-independent rdkit-core image for (R7), instead of the normal
+# per-postgres-major matrix. One rdkit-core image is shared across every
+# PostgreSQL major built for the same {rdkit, debian}, so this list is a
+# de-duplication of the same entries the normal mode expands -- computed
+# before the postgres-resolution loop below, so it needs no registry access
+# and no resolve_pg.sh call.
 set -euo pipefail
+
+cores_only=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --cores) cores_only=1; shift ;;
+        *) echo "ERROR: unknown argument '$1'" >&2; exit 1 ;;
+    esac
+done
 
 here="$(cd "$(dirname "$0")" && pwd)"
 versions_file="${VERSIONS_FILE:-versions.json}"
@@ -56,6 +72,19 @@ else
     entries=$("${here}/matrix.py" --file "$versions_file" --format json)
 fi
 
+if [ "$cores_only" = 1 ]; then
+    printf '%s' "$entries" | python3 -c '
+import json, sys
+items = json.load(sys.stdin)
+seen = []
+for item in items:
+    pair = {"rdkit": item["rdkit"], "debian": item["debian"]}
+    if pair not in seen:
+        seen.append(pair)
+print(json.dumps(seen))'
+    exit 0
+fi
+
 resolved="[]"
 
 while read -r entry; do
@@ -75,10 +104,28 @@ while read -r entry; do
     pg_output=$("${here}/resolve_pg.sh" "$pg" "$suite")
     eval "$pg_output"
 
+    # R7: fold the rdkit-core image's digest into the build key too, so a
+    # core rebuild (a new RDKit patch, a Dockerfile.rdkit-core change) is
+    # noticed the same way a new postgres base digest already is (R6).
+    # IMAGE_REPO is "<registry>/<owner>/<repo>/postgres-rdkit" (see build.yml);
+    # stripping the last path segment and appending "rdkit-core:<rdkit>-
+    # <suite>" reaches the sibling repository build-rdkit-core publishes to.
+    # Skipped under SKIP_REGISTRY_CHECK=1 like the postgres check below, and
+    # tolerant of a missing/unpublished core image (empty digest) the same
+    # way -- a core image that doesn't exist yet isn't this script's problem
+    # to raise; it just means the key can't yet depend on it.
+    core_digest=""
+    if [ "${SKIP_REGISTRY_CHECK:-}" != "1" ]; then
+        core_ref="${IMAGE_REPO%/*}/rdkit-core:${rdkit}-${suite}"
+        core_digest=$(docker buildx imagetools inspect "$core_ref" --format '{{json .Manifest}}' 2>/dev/null \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin).get("digest",""))' 2>/dev/null || echo "")
+    fi
+
     key=$("${here}/build_key.sh" \
         --rdkit "$rdkit" \
         --debian "$suite" \
-        --base-digest "$postgres_base_digest")
+        --base-digest "$postgres_base_digest" \
+        --core-digest "$core_digest")
 
     if [ "${SKIP_REGISTRY_CHECK:-}" != "1" ]; then
         key_tag="${IMAGE_REPO:?IMAGE_REPO is required unless SKIP_REGISTRY_CHECK=1}:postgres-${postgres_major_version}-rdkit-${rdkit}-${key}"

@@ -1,0 +1,83 @@
+# PostgreSQL-independent RDKit compile (SPEC R7 spike).
+#
+# The absolute paths here MUST be byte-identical to those in Dockerfile: CMake
+# caches absolute paths and any difference invalidates the whole tree.
+#
+# Throwaway unless the spike (docs/spikes/2026-08-31-rdkit-core-reuse.md) PASSES.
+ARG debian_version=bookworm
+ARG rdkit_version=2026_03_6
+ARG rdkit_repo=https://github.com/rdkit/rdkit.git
+ARG rdkit_branch_name=Release_${rdkit_version}
+ARG source_dir=/tmp/rdkit
+ARG build_dir=/tmp/rdkit-build
+ARG install_dir=/opt/rdkit
+ARG cmake_version=3.28.3
+ARG cmake_install_dir=/opt/cmake
+ARG num_build_cores=4
+ARG DEBIAN_FRONTEND=noninteractive
+
+FROM docker.io/debian:${debian_version}-slim AS rdkit-core
+ARG rdkit_repo
+ARG rdkit_branch_name
+ARG source_dir
+ARG build_dir
+ARG install_dir
+ARG cmake_version
+ARG cmake_install_dir
+ARG num_build_cores
+ARG DEBIAN_FRONTEND
+
+RUN apt-get update \
+    && apt-get install -yq --no-install-recommends \
+        build-essential ca-certificates curl git \
+        libeigen3-dev libfreetype6-dev zlib1g-dev libbz2-dev
+
+RUN git clone --depth=1 --branch=${rdkit_branch_name} ${rdkit_repo} ${source_dir}
+
+COPY scripts/install_boost.sh /usr/local/bin/install_boost.sh
+RUN install_boost.sh ${source_dir} > /tmp/boost-version.txt \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN curl -L https://github.com/Kitware/CMake/releases/download/v${cmake_version}/cmake-${cmake_version}-linux-x86_64.sh -o /tmp/cmake.sh \
+    && mkdir -p ${cmake_install_dir} \
+    && sh /tmp/cmake.sh --skip-license --prefix=${cmake_install_dir} \
+    && ln -s ${cmake_install_dir}/bin/cmake /usr/local/bin/cmake \
+    && ln -s ${cmake_install_dir}/bin/ctest /usr/local/bin/ctest \
+    && rm -f /tmp/cmake.sh
+
+# Flag list copied verbatim from Dockerfile (HEAD) except RDK_BUILD_PGSQL
+# (OFF here, ON in the consuming stage) and the four PostgreSQL_* variables
+# (absent here, present in the consuming stage). RDK_BUILD_DESCRIPTORS3D is
+# the literal OFF default (C3): the spike does not plumb the
+# rdk_build_descriptors3d arg through.
+RUN cmake \
+    -D RDK_BUILD_CAIRO_SUPPORT=OFF \
+    -D RDK_BUILD_INCHI_SUPPORT=ON \
+    -D RDK_BUILD_AVALON_SUPPORT=ON \
+    -D RDK_BUILD_PYTHON_WRAPPERS=OFF \
+    -D RDK_BUILD_COORDGEN_SUPPORT=OFF \
+    -D RDK_BUILD_MAEPARSER_SUPPORT=OFF \
+    -D RDK_BUILD_DESCRIPTORS3D=OFF \
+    -D RDK_BUILD_FREESASA_SUPPORT=OFF \
+    -D RDK_BUILD_MOLINTERCHANGE_SUPPORT=OFF \
+    -D RDK_BUILD_YAEHMOP_SUPPORT=OFF \
+    -D RDK_BUILD_STRUCTCHECKER_SUPPORT=OFF \
+    -D RDK_BUILD_CHEMDRAW_SUPPORT=OFF \
+    -D RDK_INSTALL_COMIC_FONTS=OFF \
+    -D RDK_USE_URF=OFF \
+    -D RDK_BUILD_PGSQL=OFF \
+    -D RDK_PGSQL_STATIC=ON \
+    -D RDK_INSTALL_INTREE=OFF \
+    -D CMAKE_INSTALL_PREFIX=${install_dir} \
+    -D CMAKE_BUILD_TYPE=Release \
+    -D CMAKE_CXX_FLAGS=-I${source_dir}/External \
+    -S ${source_dir} \
+    -B ${build_dir}
+
+WORKDIR ${build_dir}
+# -j${num_build_cores} on the command line, not via a MAKEFLAGS ARG (C2):
+# Docker does not expand ${...} references inside another ARG's default
+# value, so a `MAKEFLAGS='-j${num_build_cores}'` ARG would reach the shell
+# as the literal string "-j${num_build_cores}", which GNU make parses as a
+# bare `-j` -- unlimited parallel jobs.
+RUN make -j${num_build_cores}

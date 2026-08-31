@@ -62,6 +62,10 @@ jobs:
       # not re-derived from versions.json inside the build job, because this
       # is where matrix facts already get computed.
       default_debian: ${{ steps.resolve.outputs.default_debian }}
+      # R7: distinct {rdkit, debian} pairs, one rdkit-core image needed per
+      # entry -- always a subset of `matrix`'s cardinality (often much
+      # smaller, since one core image serves every PostgreSQL major).
+      cores: ${{ steps.resolve.outputs.cores }}
     steps:
       - uses: actions/checkout@v4
 
@@ -85,6 +89,7 @@ jobs:
           echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
           echo "latest_pair=$(scripts/matrix.py --format latest)" >> "$GITHUB_OUTPUT"
           echo "default_debian=$(scripts/matrix.py --format debian)" >> "$GITHUB_OUTPUT"
+          echo "cores=$(scripts/resolve_matrix.sh --cores)" >> "$GITHUB_OUTPUT"
 
           count=$(printf '%s' "$matrix" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
           if [ "$count" -eq 0 ]; then
@@ -95,8 +100,49 @@ jobs:
             printf '%s' "$matrix" | python3 -m json.tool
           fi
 
-  build:
+  # R7: one PostgreSQL-independent RDKit compile per distinct {rdkit_version,
+  # debian} (R6 job structure item 2), shared by every PostgreSQL major the
+  # `build` job below builds for that pair. Runs between resolve-matrix and
+  # build so build's builder stage can COPY --from= it via `rdkit_core_image`.
+  build-rdkit-core:
     needs: resolve-matrix
+    if: needs.resolve-matrix.outputs.empty == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJson(needs.resolve-matrix.outputs.cores) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push rdkit-core
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.rdkit-core
+          target: rdkit-core
+          push: ${{ github.event_name != 'workflow_dispatch' || inputs.push }}
+          tags: ghcr.io/${{ github.repository }}/rdkit-core:${{ matrix.entry.rdkit }}-${{ matrix.entry.debian }}
+          build-args: |
+            debian_version=${{ matrix.entry.debian }}
+            rdkit_version=${{ matrix.entry.rdkit }}
+          cache-from: type=gha,scope=core-${{ matrix.entry.debian }}-${{ matrix.entry.rdkit }}
+          cache-to: type=gha,mode=max,scope=core-${{ matrix.entry.debian }}-${{ matrix.entry.rdkit }}
+
+  build:
+    needs: [resolve-matrix, build-rdkit-core]
     if: needs.resolve-matrix.outputs.empty == 'false'
     runs-on: ubuntu-latest
     permissions:
@@ -107,6 +153,14 @@ jobs:
       matrix:
         entry: ${{ fromJson(needs.resolve-matrix.outputs.matrix) }}
     env:
+      # R7: the rdkit-core image build-rdkit-core just pushed for this entry's
+      # {rdkit, debian}. The builder stage's `rdkit_core_image` ARG (default
+      # points at this same GHCR path, so a bare `docker build .` still
+      # resolves, just requires a network pull) is overridden with this
+      # explicit value below so the tag matches exactly what was just built,
+      # not whatever the ARG default's own rdkit_version/debian_version
+      # happen to be.
+      CORE_IMAGE: ghcr.io/${{ github.repository }}/rdkit-core:${{ matrix.entry.rdkit }}-${{ matrix.entry.debian }}
       # Per-entry cache scope. The Actions cache is 10 GB per repository and is
       # evicted LRU, so concurrent matrix jobs writing mode=max to a SHARED
       # scope evict each other and can be worse than no cache at all (SPEC R6).
@@ -126,44 +180,18 @@ jobs:
       # Loaded into the local daemon so the smoke test can run before anything
       # is pushed (R8).
       #
-      # no-cache-filters: builder -- mitigates an open cache-mount hazard
-      # (Dockerfile's own comments on the `builder`, `test-build` and
-      # `test-runtime` stages call this out as unverifiable from inside the
-      # Dockerfile). The `RUN --mount=type=cache,id=rdkit-build-...` mount
-      # that `make`/`make install`/`pgsql_install.sh` populate lives in the
-      # BuildKit daemon's local cache storage, not in any image layer, so it
-      # is NOT carried by `cache-from: type=gha` the way layer cache is.
-      # GitHub-hosted runners are ALWAYS ephemeral -- no job attempt,
-      # retriggered run, or "re-run failed jobs" click ever reuses a prior
-      # runner's disk -- so `setup-buildx-action` hands every single job a
-      # brand-new builder with a cold, empty cache mount, full stop. This is
-      # not a narrow "re-run" case: an ordinary cron pickup of an entry a
-      # PREVIOUS run attempted but never pushed (or simply a different day's
-      # run against the same CACHE_SCOPE) is exactly as exposed, because the
-      # FIRST time any given job's builder ever touches the `builder` stage
-      # is always right here, in this step, regardless of why the job is
-      # running. Without `no-cache-filters`, a `cache-from: type=gha` hit
-      # restored from an EARLIER run's export (same Dockerfile, same
-      # build-args -> same cache key) would make BuildKit treat `make`/`make
-      # install`/`pgsql_install.sh` as already-done and skip executing them
-      # -- leaving THIS job's cache mount empty even though the layer cache
-      # says "done". `test-build` and `test-runtime` (below) would then fail
-      # on a missing CTestTestfile.cmake, and re-running would reproduce the
-      # same false hit every time. `--no-cache-filter builder` (passed via
-      # this input) disables cache lookups for exactly that stage, forcing
-      # its RUN instructions to actually execute on every job, which
-      # guarantees the mount is genuinely populated before any later step
-      # reads it. Because no runner ever legitimately has a warm mount to
-      # begin with, this costs nothing beyond what correctness already
-      # demanded -- do NOT try to narrow it with `github.run_attempt > 1` or
-      # similar; there is no case where skipping it is safe. The steps below
-      # this one deliberately do NOT repeat this flag: they run in the same
-      # buildx builder/daemon this step just populated for real, so their
-      # own cache lookups hit *local* state (which BuildKit always consults
-      # before any remote import) and correctly see a warm mount -- forcing
-      # them too would only pay the no-op-recompile cost (or, on a genuinely
-      # cold mount, the same unavoidable full-recompile cost) redundantly,
-      # four more times.
+      # No `no-cache-filters: builder` here (removed by R7, C4): the hazard
+      # that flag used to guard against was the `RUN --mount=type=cache,
+      # id=rdkit-build-...` mount that `make`/`make install`/`pgsql_install.sh`
+      # populated -- daemon-local cache-mount state that `cache-from:
+      # type=gha` could never restore, so a *layer*-cache hit on those steps
+      # could leave the mount empty while the layer cache said "done". R7
+      # removes that mount entirely: ${build_dir} now arrives via `COPY
+      # --from=rdkit-core-provider` and every later RUN's output is a normal
+      # image layer, so a `cache-from` layer hit and the files it produced
+      # are now the same thing -- there is no separate mount state left to
+      # fall out of sync. Forcing `builder` to always re-run would only cost
+      # time for no remaining correctness benefit.
       - name: Build runtime image (no push)
         uses: docker/build-push-action@v6
         with:
@@ -171,7 +199,6 @@ jobs:
           target: runtime
           load: true
           tags: local/postgres-rdkit:candidate
-          no-cache-filters: builder
           build-args: |
             debian_version=${{ matrix.entry.debian }}
             postgres_major_version=${{ matrix.entry.postgres_major }}
@@ -179,6 +206,7 @@ jobs:
             postgres_base_image=${{ matrix.entry.postgres_base_image }}
             postgres_base_digest=${{ matrix.entry.postgres_base_digest }}
             rdkit_version=${{ matrix.entry.rdkit }}
+            rdkit_core_image=${{ env.CORE_IMAGE }}
             vcs_ref=${{ github.sha }}
           cache-from: type=gha,scope=${{ env.CACHE_SCOPE }}
           cache-to: type=gha,mode=max,scope=${{ env.CACHE_SCOPE }}
@@ -194,6 +222,7 @@ jobs:
             postgres_major_version=${{ matrix.entry.postgres_major }}
             postgres_base_image=${{ matrix.entry.postgres_base_image }}
             rdkit_version=${{ matrix.entry.rdkit }}
+            rdkit_core_image=${{ env.CORE_IMAGE }}
           cache-from: type=gha,scope=${{ env.CACHE_SCOPE }}
 
       # Ruling 27: an unguarded `cat` here would let an empty or truncated
@@ -231,6 +260,7 @@ jobs:
             postgres_major_version=${{ matrix.entry.postgres_major }}
             postgres_base_image=${{ matrix.entry.postgres_base_image }}
             rdkit_version=${{ matrix.entry.rdkit }}
+            rdkit_core_image=${{ env.CORE_IMAGE }}
           cache-from: type=gha,scope=${{ env.CACHE_SCOPE }}
 
       # Guards against a runtime dependency that was present at build time but
@@ -245,6 +275,7 @@ jobs:
             postgres_major_version=${{ matrix.entry.postgres_major }}
             postgres_base_image=${{ matrix.entry.postgres_base_image }}
             rdkit_version=${{ matrix.entry.rdkit }}
+            rdkit_core_image=${{ env.CORE_IMAGE }}
           cache-from: type=gha,scope=${{ env.CACHE_SCOPE }}
 
       - name: Functional smoke test
@@ -350,6 +381,7 @@ jobs:
             postgres_base_image=${{ matrix.entry.postgres_base_image }}
             postgres_base_digest=${{ matrix.entry.postgres_base_digest }}
             rdkit_version=${{ matrix.entry.rdkit }}
+            rdkit_core_image=${{ env.CORE_IMAGE }}
             rdkit_pickle_version=${{ steps.labels.outputs.rdkit_pickle_version }}
             rdkit_cartridge_version=${{ steps.labels.outputs.rdkit_cartridge_version }}
             boost_version=${{ steps.labels.outputs.boost_version }}

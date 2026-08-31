@@ -39,6 +39,24 @@ else
     _fail "build keys collided across rdkit versions"
 fi
 
+echo "--- --cores de-duplicates by (rdkit, debian) ---"
+# /tmp/versions-one.json (written above) cross-products 1 postgres major with
+# 2 rdkit versions -- 2 matrix entries, but --cores reports the R7 build
+# (SPEC R7): one PostgreSQL-independent rdkit-core image per distinct
+# {rdkit_version, debian}, not one per matrix entry. len(d) == 2 here would
+# also pass if --cores just echoed the un-deduplicated matrix back (this
+# fixture happens to have only one postgres major), so it alone does not
+# prove de-duplication -- but combined with the second assertion (each core
+# entry carries ONLY rdkit and debian, not postgres_major) it does: an
+# unimplemented/removed --cores that instead returned the full matrix
+# entries would fail THAT assertion, since matrix entries also carry
+# postgres_major. Both assertions fail if the flag is dropped entirely (the
+# command would then error on an unknown argument).
+out=$(env -u DISPATCH_POSTGRES PG_FIXTURE_DIR="${REPO_ROOT}/tests/fixtures/registry" \
+      VERSIONS_FILE=/tmp/versions-one.json "$RESOLVE" --cores)
+assert_eq "2" "$(jqlike "$out" 'len(d)')" "two rdkit versions give two core images"
+assert_eq "debian,rdkit" "$(jqlike "$out" '",".join(sorted(d[0]))')" "core entries carry only rdkit and debian"
+
 echo "--- dispatch mode: exactly the requested pair ---"
 out=$(DISPATCH_POSTGRES=17.9 DISPATCH_RDKIT=2023_09_6 \
       PG_FIXTURE_DIR="${REPO_ROOT}/tests/fixtures/registry" "$RESOLVE")

@@ -1,4 +1,4 @@
-.PHONY: help build runtime test test-build test-runtime smoke labels test-scripts clean
+.PHONY: help core build runtime test test-build test-runtime smoke labels test-scripts clean
 
 # Without this, make does NOT delete a target whose recipe failed (e.g. a
 # `resolve_pg.sh` 429 mid-write to $(RESOLVED)), so a truncated/empty
@@ -37,6 +37,15 @@ RESOLVED   := $(CACHE_DIR)/pg-$(POSTGRES)-$(DEBIAN).env
 LABELS     := $(CACHE_DIR)/labels-$(POSTGRES)-$(RDKIT)-$(DEBIAN).env
 LABELS_TMP := $(CACHE_DIR)/labels-tmp-$(POSTGRES)-$(RDKIT)-$(DEBIAN)
 
+# R7 (C1): the published rdkit-core image (Dockerfile.rdkit-core) cannot be
+# pulled from ghcr.io in this session (no push/merge/PR access, and the tag
+# doesn't exist yet regardless) -- Dockerfile's own `rdkit_core_image` ARG
+# default points there only as the bare-`docker build .` fallback. Every
+# local target instead builds and consumes a LOCAL core image, one per
+# {RDKIT, DEBIAN} (not per POSTGRES/SUITE_SUFFIX -- that's the whole point
+# of R7: one core tree shared across every PostgreSQL major).
+CORE_IMAGE := rdkit-core:$(RDKIT)-$(DEBIAN)
+
 # Make cannot pass a literal comma inside $(call); this is the standard escape.
 COMMA := ,
 
@@ -67,6 +76,7 @@ define docker_build
 		--target $(1) \
 		--build-arg debian_version=$(DEBIAN) \
 		--build-arg rdkit_version=$(RDKIT) \
+		--build-arg rdkit_core_image=$(CORE_IMAGE) \
 		--build-arg postgres_major_version=$$postgres_major_version \
 		--build-arg postgres_point_version=$$postgres_point_version \
 		--build-arg postgres_base_image=$$postgres_base_image \
@@ -82,13 +92,30 @@ endef
 image_name = postgres-rdkit:postgres-$$postgres_point_version-rdkit-$(RDKIT)$(SUITE_SUFFIX)
 
 help:
-	@echo "Targets: build runtime test test-build test-runtime smoke labels test-scripts clean"
+	@echo "Targets: core build runtime test test-build test-runtime smoke labels test-scripts clean"
 	@echo "Variables: POSTGRES=$(POSTGRES) RDKIT=$(RDKIT) DEBIAN=$(DEBIAN)"
 
-build: $(RESOLVED)
+# R7 (C1): build the PostgreSQL-independent RDKit core image locally and tag
+# it $(CORE_IMAGE). Not tracked via a file target (docker build is its own
+# cache), so this always re-runs, but with an unchanged Dockerfile.rdkit-core
+# and build context Docker's own layer cache makes it near-instant. Every
+# target below that ultimately builds `builder` (build, labels, runtime,
+# test-build, test-runtime) depends on this, since the builder stage's first
+# steps now COPY --from=rdkit-core-provider rather than cloning and
+# compiling RDKit itself.
+core:
+	docker build \
+		-f Dockerfile.rdkit-core \
+		--target rdkit-core \
+		--build-arg debian_version=$(DEBIAN) \
+		--build-arg rdkit_version=$(RDKIT) \
+		-t $(CORE_IMAGE) \
+		.
+
+build: core $(RESOLVED)
 	@$(call docker_build,builder,-t postgres-rdkit-builder:$(RDKIT))
 
-labels: $(RESOLVED)
+labels: core $(RESOLVED)
 	@$(call docker_build,label-values-export,--output type=local$(COMMA)dest=$(LABELS_TMP))
 	@mv $(LABELS_TMP)/labels.env $(LABELS)
 	@rmdir $(LABELS_TMP)
@@ -97,13 +124,14 @@ labels: $(RESOLVED)
 # Two passes: build the image, then export the source-derived label values from
 # the now-warm cache and rebuild with them stamped on. The second pass is near
 # instant because every layer is cached.
-runtime: $(RESOLVED) labels
+runtime: core $(RESOLVED) labels
 	@set -eu; . $(RESOLVED); . $(LABELS); \
 	docker build \
 		-f Dockerfile \
 		--target runtime \
 		--build-arg debian_version=$(DEBIAN) \
 		--build-arg rdkit_version=$(RDKIT) \
+		--build-arg rdkit_core_image=$(CORE_IMAGE) \
 		--build-arg postgres_major_version=$$postgres_major_version \
 		--build-arg postgres_point_version=$$postgres_point_version \
 		--build-arg postgres_base_image=$$postgres_base_image \
@@ -117,10 +145,10 @@ runtime: $(RESOLVED) labels
 		. \
 	&& docker image inspect $(image_name) --format 'Built {{index .RepoTags 0}} -- {{.Size}} bytes'
 
-test-build: $(RESOLVED)
+test-build: core $(RESOLVED)
 	@$(call docker_build,test-build,)
 
-test-runtime: $(RESOLVED)
+test-runtime: core $(RESOLVED)
 	@$(call docker_build,test-runtime,)
 
 smoke: runtime

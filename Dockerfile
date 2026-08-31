@@ -10,6 +10,16 @@ ARG postgres_base_image=docker.io/postgres:${postgres_major_version}-${debian_ve
 ARG postgres_point_version=
 ARG postgres_base_digest=
 
+# The published, PostgreSQL-independent RDKit compile whose tree the builder
+# reuses (R7) instead of cloning and compiling RDKit itself. Same ARG-in-ARG-
+# default shape as postgres_base_image just above, consumed by a FROM below --
+# confirmed empirically (not assumed) to expand correctly at this scope; see
+# docs/spikes/2026-08-31-rdkit-core-reuse.md and task-18-report.md's C3
+# section. `make core`/`make runtime` etc. (Makefile) always override this
+# with a local `rdkit-core:<rdkit>-<debian>` tag; the default here only
+# matters for a bare `docker build .`.
+ARG rdkit_core_image=ghcr.io/radusuciu/docker-postgres-rdkit/rdkit-core:${rdkit_version}-${debian_version}
+
 # Label inputs only, produced by the label-values-export stage (R9). NOTHING in
 # the build reads boost_version to select a package; the Boost family is chosen
 # by scripts/install_boost.sh from RDKit's declared floor (R2).
@@ -18,12 +28,15 @@ ARG rdkit_cartridge_version=
 ARG boost_version=
 ARG vcs_ref=
 
-ARG rdkit_repo=https://github.com/rdkit/rdkit.git
-ARG rdkit_branch_name=Release_${rdkit_version}
+# source_dir/build_dir/install_dir/cmake_install_dir must stay byte-identical
+# to Dockerfile.rdkit-core's own ARG defaults of the same names: CMake caches
+# absolute paths, and any difference invalidates the whole reused tree (R7).
+# rdkit_repo/rdkit_branch_name/cmake_version are no longer used here -- the
+# clone and the CMake toolchain download both moved to Dockerfile.rdkit-core;
+# the builder now gets both via COPY --from=rdkit-core-provider, below.
 ARG source_dir=/tmp/rdkit
 ARG build_dir=/tmp/rdkit-build
 ARG install_dir=/opt/rdkit
-ARG cmake_version=3.28.3
 ARG cmake_install_dir=/opt/cmake
 ARG num_build_cores=4
 
@@ -39,18 +52,20 @@ ARG rdk_build_descriptors3d=OFF
 ARG DEBIAN_FRONTEND=noninteractive
 
 
+# The PostgreSQL-independent RDKit compile (R7): source tree, Boost-toggled
+# build tree and CMake toolchain, shared across every PostgreSQL major. See
+# Dockerfile.rdkit-core and docs/spikes/2026-08-31-rdkit-core-reuse.md.
+FROM ${rdkit_core_image} AS rdkit-core-provider
+
 ################################################################################
 # Building the RDKit postgres cartridge
 ################################################################################
 FROM ${postgres_base_image} AS builder
 ARG postgres_major_version
 ARG rdkit_version
-ARG rdkit_repo
-ARG rdkit_branch_name
 ARG source_dir
 ARG build_dir
 ARG install_dir
-ARG cmake_version
 ARG cmake_install_dir
 ARG num_build_cores
 ARG debian_version
@@ -79,11 +94,41 @@ RUN apt-get update \
         zlib1g-dev \
         libbz2-dev
 
-# Clone first: the Boost floor is read from the cloned source (R2).
-# Chown here rather than in test-build, where the recursive chown was slow.
-RUN git clone --depth=1 --branch=${rdkit_branch_name} ${rdkit_repo} ${source_dir} \
-    && chown -R postgres:postgres ${source_dir}
+# R7: reuse the core image's already-cloned source tree, already-compiled
+# (RDK_BUILD_PGSQL=OFF) build tree and CMake toolchain instead of cloning and
+# building them again here -- this is the change this Dockerfile makes for
+# R7. --chown=postgres:postgres on source_dir/build_dir mirrors what the
+# pre-R7 git-clone chown and the cache mount's uid=999/gid=999 respectively
+# used to provide; nothing here previously ran as postgres before this point,
+# so both need it explicitly now. cmake_install_dir is intentionally NOT
+# chowned to postgres (nothing writes into it) and is put on PATH instead of
+# symlinked into /usr/local/bin, matching the same COPY --from=builder +
+# ENV PATH pattern the test-runtime stage below already uses for the same
+# reason: no lineage this COPY is used in already has cmake symlinked in.
+#
+# C4 (six cache mounts): every `--mount=type=cache,target=${build_dir}` in
+# this file is REMOVED, on all six of the RUN lines that used it (the two
+# below plus test-build's and test-runtime's ctest RUN). Dockerfile.rdkit-core
+# proved (spike) that build_dir must be a normal image layer, not a cache
+# mount, for `COPY --from=` to reach it at all -- a cache mount on this same
+# path in a later RUN would silently shadow whatever COPY just wrote,
+# reproducing "R7 works but every build is still slow" with no error. The
+# mount's original benefit (resume a crashed build without recompiling) is
+# also far smaller post-R7: the tree arriving via COPY is already built, and
+# the only compilation ${build_dir} sees from here on is the ~15-object
+# cartridge relink the spike measured -- not worth reintroducing the shadowing
+# hazard to save a ~1-minute retry.
+COPY --from=rdkit-core-provider --chown=postgres:postgres ${source_dir} ${source_dir}
+COPY --from=rdkit-core-provider --chown=postgres:postgres ${build_dir} ${build_dir}
+COPY --from=rdkit-core-provider ${cmake_install_dir} ${cmake_install_dir}
+ENV PATH=${cmake_install_dir}/bin:$PATH
 
+# FALLBACK proven necessary by the spike (attempt 2): a plain COPY of Boost's
+# headers/CMake-config from the core image is not sufficient to LINK against
+# Boost -- the .so runtime libraries themselves were never copied. Installing
+# Boost again here, in the same Debian suite the core image used, selects the
+# same family (scripts/install_boost.sh reads RDKit's declared floor, R2) so
+# the reconfigure below links against a byte-compatible library.
 COPY scripts/install_boost.sh /usr/local/bin/install_boost.sh
 RUN install_boost.sh ${source_dir} > /tmp/boost-version.txt \
     && cat /tmp/boost-version.txt \
@@ -93,28 +138,12 @@ RUN install_boost.sh ${source_dir} > /tmp/boost-version.txt \
 COPY scripts/rdkit_labels.sh /usr/local/bin/rdkit_labels.sh
 RUN rdkit_labels.sh ${source_dir} > /tmp/rdkit-labels.txt && cat /tmp/rdkit-labels.txt
 
-RUN <<-EOF
-    set -eux
-    curl -L https://github.com/Kitware/CMake/releases/download/v${cmake_version}/cmake-${cmake_version}-linux-x86_64.sh -o /tmp/cmake.sh
-
-    mkdir -p ${cmake_install_dir}
-    sh /tmp/cmake.sh --skip-license --prefix=${cmake_install_dir}
-    ln -s ${cmake_install_dir}/bin/cmake /usr/local/bin/cmake
-    ln -s ${cmake_install_dir}/bin/ctest /usr/local/bin/ctest
-    rm -f /tmp/cmake.sh
-
-    # make install (run as postgres, below) writes here; /opt is root:root 0755
-    # in the base image, so postgres cannot mkdir under it without this.
-    mkdir -p ${install_dir}
-    chown postgres:postgres ${install_dir}
-EOF
+# make install (run as postgres, below) writes here; /opt is root:root 0755
+# in the base image, so postgres cannot mkdir under it without this.
+RUN mkdir -p ${install_dir} && chown postgres:postgres ${install_dir}
 
 USER postgres
 
-# Cache mount persists build artifacts between failed builds.
-# If the build crashes, the next attempt resumes from compiled objects.
-# uid=999 is the postgres user in official postgres images.
-#
 # RDK_BUILD_CHEMDRAW_SUPPORT: new in 2025_09_2, default ON upstream (absent
 # entirely from 2024_09_5's CMakeLists.txt). The ChemDraw library itself
 # builds fine -- External/ChemDraw/CMakeLists.txt fetches Glysade/chemdraw
@@ -156,8 +185,13 @@ USER postgres
 # CI must never set this: scripts/build_key.sh does not key on it, so two
 # differently-configured images built from the same key would be
 # indistinguishable under R6.
-RUN --mount=type=cache,target=/tmp/rdkit-build,id=rdkit-build-${rdkit_version}-${postgres_major_version}-${debian_version},uid=999,gid=999 \
-    cmake \
+# No cache mount (C4, above): the cmake cache under ${build_dir} is a normal
+# image layer here, inherited from rdkit-core-provider via COPY. This
+# reconfigure toggles RDK_BUILD_PGSQL on (the only flag that differs from
+# Dockerfile.rdkit-core's configure) against that already-populated cache --
+# the mechanism the spike proved: CMake sees almost everything as already
+# built and only the cartridge's own sources need compiling.
+RUN cmake \
     -D RDK_BUILD_CAIRO_SUPPORT=OFF \
     -D RDK_BUILD_INCHI_SUPPORT=ON \
     -D RDK_BUILD_AVALON_SUPPORT=ON \
@@ -194,17 +228,14 @@ WORKDIR ${build_dir}
 # value this Dockerfile is supposed to enforce. Passing -j on the command
 # line also gives nested `make` invocations a real shared jobserver, which
 # the environment-variable form never provided.
-RUN --mount=type=cache,target=/tmp/rdkit-build,id=rdkit-build-${rdkit_version}-${postgres_major_version}-${debian_version},uid=999,gid=999 \
-    make -j${num_build_cores}
-RUN --mount=type=cache,target=/tmp/rdkit-build,id=rdkit-build-${rdkit_version}-${postgres_major_version}-${debian_version},uid=999,gid=999 \
-    make -j${num_build_cores} install
+RUN make -j${num_build_cores}
+RUN make -j${num_build_cores} install
 
 # pgsql_install.sh copies into /usr/share/postgresql/.../extension and
 # /usr/lib/postgresql/.../lib, both root:root 0755 in the base image --
 # postgres cannot write there.
 USER root
-RUN --mount=type=cache,target=/tmp/rdkit-build,id=rdkit-build-${rdkit_version}-${postgres_major_version}-${debian_version},uid=999,gid=999 \
-    /bin/bash ./Code/PgSQL/rdkit/pgsql_install.sh
+RUN /bin/bash ./Code/PgSQL/rdkit/pgsql_install.sh
 
 COPY scripts/runtime_packages.sh /usr/local/bin/runtime_packages.sh
 RUN runtime_packages.sh \
@@ -247,12 +278,13 @@ USER postgres
 # binary, dynamically linked against the build tree's libs, exercised here
 # because this stage still has the builder's full toolchain (unlike
 # runtime). ctest must run from the build tree (CTestTestfile.cmake lives in
-# ${build_dir}, not ${source_dir}) and ${build_dir} is only populated inside
-# the cache mount, so this RUN mounts the same cache the builder used to
-# compile it. LD_LIBRARY_PATH points at the build tree's lib/ (out-of-tree
-# build, RDK_INSTALL_INTREE=OFF) where the not-yet-installed .so files live;
-# RDBASE stays the source checkout, which is where RDKit's tests look for
-# their data files.
+# ${build_dir}, not ${source_dir}). This stage is FROM builder (same
+# lineage), and ${build_dir} is now a normal image layer, not a cache mount
+# (C4, above) -- so it's already present here with no COPY or mount needed.
+# LD_LIBRARY_PATH points at the build tree's lib/ (out-of-tree build,
+# RDK_INSTALL_INTREE=OFF) where the not-yet-installed .so files live; RDBASE
+# stays the source checkout, which is where RDKit's tests look for their data
+# files.
 #
 # -E testRascalMCES: RDKit registers this Catch2 binary as a single CTest
 # test with no per-case CTest entries, so excluding just its failing case
@@ -269,22 +301,13 @@ USER postgres
 # zero tests. This flag is what makes "the suite ran" a checked property
 # instead of an assumption.
 #
-# PRECONDITION this RUN depends on and cannot itself verify: the cache mount
-# must actually be warm. Cache-mount contents never enter an image layer, so
-# they don't travel with BuildKit's layer cache the way COPY/RUN outputs do.
-# Within one build this is safe -- builder populates the mount and this
-# stage reads it back in the same invocation. The failure mode is a *layer*-
-# cache hit on builder's make/make install steps (e.g. a restored CI cache)
-# combined with an empty or pruned `id=rdkit-build-...` cache mount: make is
-# skipped as a cache hit, the mount stays empty, and this RUN fails on a
-# missing CTestTestfile.cmake. If that happens, the `--no-tests=error`
-# failure here means "the build cache and the cache mount fell out of sync,"
-# not "the code broke" -- check whether Task 14's CI cache export/import
-# carries the cache mount alongside the layer cache before assuming a
-# regression.
+# No cache-mount precondition to document here post-R7 (C4): ${build_dir}
+# arrived as a normal COPY'd-then-compiled layer in builder, and this stage
+# inherits that layer directly (FROM builder) the same way any other file
+# builder produced would carry forward -- there is no separate cache-mount
+# state that can fall out of sync with the layer cache anymore.
 WORKDIR ${build_dir}
-RUN --mount=type=cache,target=/tmp/rdkit-build,id=rdkit-build-${rdkit_version}-${postgres_major_version}-${debian_version},uid=999,gid=999,sharing=locked \
-    initdb -D /tmp/pgdata \
+RUN initdb -D /tmp/pgdata \
   && pg_ctl -D /tmp/pgdata -l /tmp/pgdata/log.txt start \
   && RDBASE="${source_dir}" LD_LIBRARY_PATH="${build_dir}/lib" ctest --no-tests=error -j${num_build_cores} --output-on-failure -E testRascalMCES
 
@@ -351,6 +374,12 @@ ARG debian_version
 
 USER postgres
 COPY --from=builder --chown=postgres ${source_dir} ${source_dir}
+# C4: ${build_dir} is no longer a cache mount, so it no longer reaches this
+# stage "for free" via the shared mount id the way it used to -- this stage
+# is a different lineage from builder (FROM runtime, not FROM builder) and
+# must now COPY it explicitly, the same way source_dir and cmake_install_dir
+# already were.
+COPY --from=builder --chown=postgres ${build_dir} ${build_dir}
 COPY --from=builder ${cmake_install_dir} ${cmake_install_dir}
 ENV PATH=${cmake_install_dir}/bin:$PATH
 
@@ -370,21 +399,13 @@ ENV PATH=${cmake_install_dir}/bin:$PATH
 # this against the built image, so narrowing this stage doesn't leave R8
 # thin.)
 #
-# ctest needs ${build_dir} (cache-mounted, not an image layer) for
-# CTestTestfile.cmake and the built .so files. This stage is a different
-# lineage from builder (FROM runtime, not FROM builder), but BuildKit cache
-# mounts are keyed by id at the daemon level, not by stage, so the same
-# id=rdkit-build-... cache still has the compiled build tree in it.
-#
-# PRECONDITION this RUN depends on and cannot itself verify: the cache mount
-# must actually be warm. Cache-mount contents never enter an image layer, so
-# they don't travel with BuildKit's layer cache the way COPY/RUN outputs do
-# -- a *layer*-cache hit on builder's make/make install steps (e.g. a
-# restored CI cache) combined with an empty or pruned `id=rdkit-build-...`
-# cache mount means make never actually ran to populate ${build_dir}, and
-# this RUN fails on a missing CTestTestfile.cmake. If that happens, treat it
-# as "the build cache and the cache mount fell out of sync" -- check Task
-# 14's CI cache export/import for the cache mount, not as a code regression.
+# ctest needs ${build_dir} for CTestTestfile.cmake and the built .so files;
+# the COPY --from=builder above (C4, post-R7) puts it here as a normal image
+# layer -- no cache-mount precondition to document anymore (contrast the
+# pre-R7 version of this comment: cache-mount contents never entered an image
+# layer, so a layer-cache hit on builder's compile steps could leave the
+# mount empty here even though the build looked done. A COPY doesn't have
+# that failure mode -- if builder's layer exists, this COPY has the tree).
 #
 # No trailing "; exit 0": a failure in initdb/pg_ctl/ctest must fail this
 # RUN. pg_ctl stop still runs via the trap-like sequencing below so a running
@@ -398,8 +419,7 @@ ENV PATH=${cmake_install_dir}/bin:$PATH
 # -R filter selecting only testPgSQL, an -E exclusion of a different test
 # is redundant dead weight.
 WORKDIR ${build_dir}
-RUN --mount=type=cache,target=/tmp/rdkit-build,id=rdkit-build-${rdkit_version}-${postgres_major_version}-${debian_version},uid=999,gid=999,sharing=locked \
-    initdb -D /tmp/pgdata \
+RUN initdb -D /tmp/pgdata \
   && pg_ctl -D /tmp/pgdata -l /tmp/pgdata/log.txt start \
   && RDBASE="${source_dir}" LD_LIBRARY_PATH="${build_dir}/lib" ctest --no-tests=error -R '^testPgSQL$' --output-on-failure; \
     status=$?; \
