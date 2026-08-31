@@ -32,7 +32,7 @@ For a build of any other Debian suite, the point tag gains a `-<suite>` suffix, 
 
 This is deliberate: an on-demand build must never re-point a tag the automatic matrix owns. The automatic matrix itself is single-suite, so a non-default suite is only reachable through `make ... DEBIAN=<suite>` locally or the `Build images` workflow's `debian` `workflow_dispatch` input.
 
-You can find the available tags on the "Releases" page of this GitHub repository.
+You can find every available tag either in the "Available Versions" table below (regenerated daily) or on this repository's GHCR package page, linked from the "Packages" section in the repository sidebar.
 
 Every image also carries provenance labels -- notably `org.rdkit.pickle-version`, which is the actual client/server compatibility contract: your client's RDKit must be at least the cartridge's RDKit, or a newer pickle format will be read with only a warning and produce corrupt results. Inspect the labels with `docker image inspect --format '{{json .Config.Labels}}' <image>`.
 
@@ -121,7 +121,9 @@ Build arguments:
 * `rdkit_version`: an RDKit release tag suffix. Formatted like `2026_03_6`.
 * `rdk_build_descriptors3d`: optional, defaults to `OFF`. Set to `ON` to build the RDKit releases in the table above that need it.
 
-There is no build argument that selects a Boost version. The Boost package family is chosen at build time from RDKit's own declared floor (`RDK_BOOST_VERSION`), picking the lowest family in the suite that satisfies it. If no family satisfies the floor, the build fails with a message naming the floor and listing what the suite offers; the fix is to raise `debian` in `versions.json`.
+There is no build argument that selects a Boost version. Instead, the Boost package family is chosen automatically at build time from RDKit's own declared floor (`RDK_BOOST_VERSION`), picking the lowest family in the Debian suite that satisfies it.
+
+If no family in the suite satisfies the floor, the build fails with a message naming the floor and listing what the suite offers. The fix in that case is to raise `debian` in `versions.json`.
 
 ## Credits and other projects
 

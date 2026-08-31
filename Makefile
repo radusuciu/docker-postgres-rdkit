@@ -1,5 +1,11 @@
 .PHONY: help build runtime test test-build test-runtime smoke labels test-scripts clean
 
+# Without this, make does NOT delete a target whose recipe failed (e.g. a
+# `resolve_pg.sh` 429 mid-write to $(RESOLVED)), so a truncated/empty
+# .make/pg-<x>-<y>.env would be left behind and treated as up to date on
+# every later run (Ruling 42).
+.DELETE_ON_ERROR:
+
 # Defaults come from versions.json so a bare `make runtime` builds the pair that
 # gets the `latest` tag. Override any of them on the command line (SPEC R11):
 #   make runtime POSTGRES=17.11 RDKIT=2023_09_6

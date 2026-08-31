@@ -10,6 +10,10 @@ on:
     paths:
       - 'versions.json'
   schedule:
+    # 01:30 UTC, an hour after build.yml's 00:00 UTC cron -- independent of
+    # it, not chained: this just needs to run sometime after a build could
+    # have landed a new point version, and re-generating on a `versions.json`
+    # push already covers the matrix-membership case.
     - cron: '30 1 * * *'
 
 jobs:
@@ -29,7 +33,10 @@ jobs:
             scripts/matrix.py --format json \
               | python3 -c 'import json,sys; [print(e["postgres_major"], e["rdkit"], e["debian"]) for e in json.load(sys.stdin)]' \
               | while read -r major rdkit suite; do
-                  eval "$(scripts/resolve_pg.sh "$major" "$suite")"
+                  # A bare assignment propagates `set -e` on failure; wrapping
+                  # the call directly in `eval "$(...)"` would not; see Ruling 40.
+                  row="$(scripts/resolve_pg.sh "$major" "$suite")"
+                  eval "$row"
                   echo "| ${postgres_point_version} | ${rdkit} | \`postgres-${major}-rdkit-${rdkit}\` |"
                 done
           } > new_matrix.md
