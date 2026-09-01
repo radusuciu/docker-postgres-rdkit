@@ -87,6 +87,14 @@ fi
 
 resolved="[]"
 
+# Memoizes resolve_pg.sh's output per {postgres_major, debian}. The loop
+# below iterates matrix ENTRIES (one per {postgres_major, rdkit, debian}),
+# but postgres resolution depends only on {postgres_major, debian} -- the
+# same major is resolved once per RDKit version otherwise, multiplying
+# `docker buildx imagetools inspect` calls (i.e. anonymous Docker Hub manifest
+# requests) by the number of RDKit versions in the matrix for no reason.
+declare -A _pg_cache
+
 while read -r entry; do
     [ -n "$entry" ] || continue
     export _ENTRY="$entry"
@@ -101,7 +109,13 @@ while read -r entry; do
     # invisible to `set -e` and `eval` of the resulting empty string silently
     # leaves the PREVIOUS iteration's postgres_* variables in place, emitting
     # a duplicated, wrong entry instead of erroring.
-    pg_output=$("${here}/resolve_pg.sh" "$pg" "$suite")
+    _cache_key="${pg}|${suite}"
+    if [ -n "${_pg_cache[$_cache_key]+x}" ]; then
+        pg_output="${_pg_cache[$_cache_key]}"
+    else
+        pg_output=$("${here}/resolve_pg.sh" "$pg" "$suite")
+        _pg_cache[$_cache_key]="$pg_output"
+    fi
     eval "$pg_output"
 
     # R7: fold the rdkit-core image's digest into the build key too, so a
@@ -171,9 +185,29 @@ while read -r entry; do
 
     if [ "${SKIP_REGISTRY_CHECK:-}" != "1" ]; then
         key_tag="${IMAGE_REPO:?IMAGE_REPO is required unless SKIP_REGISTRY_CHECK=1}:postgres-${postgres_major_version}-rdkit-${rdkit}-${key}"
-        if docker manifest inspect "$key_tag" >/dev/null 2>&1; then
+        # Ruling 57: same shape as the rdkit-core digest lookup above (Ruling
+        # 48) and for the same reason -- a lookup that FAILS (auth, network,
+        # missing buildx) must not collapse into the same result as an entry
+        # that genuinely has not been built yet. GHCR visibility is
+        # PER-PACKAGE: a public rdkit-core and a not-yet-readable
+        # postgres-rdkit is plausible on the very first run (rdkit-core is a
+        # brand-new package), which would leave the guarded lookup above
+        # green while this one failed silently -- ten full RDKit builds every
+        # day, looking perfectly healthy.
+        if key_inspect_output=$(docker manifest inspect "$key_tag" 2>&1); then
+            key_inspect_rc=0
+        else
+            key_inspect_rc=$?
+        fi
+        if [ "$key_inspect_rc" -eq 0 ]; then
             echo "skip: ${key_tag} already exists" >&2
             continue
+        elif printf '%s' "$key_inspect_output" | grep -qiE 'not found|no such manifest|manifest unknown|name unknown|name_unknown'; then
+            : # not built yet -- proceed to include this entry
+        else
+            echo "ERROR: build-key existence check failed for ${key_tag}:" >&2
+            printf '%s\n' "$key_inspect_output" >&2
+            exit 1
         fi
     fi
 

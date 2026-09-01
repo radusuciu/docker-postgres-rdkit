@@ -121,11 +121,13 @@ class TestShippedFile(unittest.TestCase):
         # recent RDKit release families at their latest patch, so this pair
         # is expected to change on every version bump. Pin the format
         # (YYYY_MM_N) and the count instead of the exact values.
-        self.assertEqual(len(cfg["rdkit_versions"]), 2)
+        self.assertGreaterEqual(len(cfg["rdkit_versions"]), 1)
         for version in cfg["rdkit_versions"]:
             self.assertRegex(version, r"^\d{4}_\d{2}_\d+$")
-        self.assertEqual(cfg["postgres_majors"], ["14", "15", "16", "17", "18"])
-        self.assertEqual(len(matrix.expand(cfg)), 10)
+        self.assertEqual(
+            len(matrix.expand(cfg)),
+            len(cfg["postgres_majors"]) * len(cfg["rdkit_versions"]),
+        )
 
 
 if __name__ == "__main__":

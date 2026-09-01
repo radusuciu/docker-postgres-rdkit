@@ -53,6 +53,34 @@ _manifest_json() {
     fi
 }
 
+# _full_json <image-ref> -- {"image": ..., "manifest": ...} in ONE round trip.
+# For a major reference, base_image_tag and major_ref are the same string, so
+# resolving both the point version and the digest against it would otherwise
+# mean two separate `docker buildx imagetools inspect` calls (i.e. two
+# anonymous Docker Hub manifest requests) for the same image. Used only by
+# that shared-ref case below; the point-pinned branch queries two genuinely
+# different refs and still makes two calls.
+#
+# Verified against a live `docker buildx imagetools inspect ... --format
+# '{{json .}}'` response: unlike `{{json .Image}}` / `{{json .Manifest}}`
+# (which address Go struct fields directly, capitalized), marshaling the
+# WHOLE object serializes struct field names via their lowercase json tags --
+# "image", "manifest", "name" -- not "Image"/"Manifest". Do not "fix" the
+# casing below to match the Go field names; it was checked against the real
+# registry, not assumed.
+_full_json() {
+    if [ -n "${PG_FIXTURE_DIR:-}" ]; then
+        python3 -c '
+import json, sys
+image = json.load(open(sys.argv[1]))
+manifest = json.load(open(sys.argv[2]))
+print(json.dumps({"image": image, "manifest": manifest}))
+' "${PG_FIXTURE_DIR}/$(_fixture_name "$1").image.json" "${PG_FIXTURE_DIR}/$(_fixture_name "$1").manifest.json"
+    else
+        docker buildx imagetools inspect "$1" --format '{{json .}}'
+    fi
+}
+
 # _point_version <image-ref>
 # PG_VERSION looks like "17.11-1.pgdg12+2"; the point version is the part before
 # the first '-'. On a multi-arch manifest list {{json .Image}} returns a
@@ -83,21 +111,56 @@ print(digest)
 '
 }
 
+# Same extraction as _point_version/_digest above, but reading from a single
+# already-fetched _full_json response instead of issuing its own inspect call.
+_point_version_from_full() {
+    python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+config = data.get("image")
+config = config.get("linux/amd64", config) if isinstance(config, dict) else config
+if "config" not in config:
+    sys.exit("ERROR: no linux/amd64 image config in registry metadata")
+for entry in config["config"].get("Env", []):
+    if entry.startswith("PG_VERSION="):
+        print(entry.split("=", 1)[1].split("-", 1)[0])
+        break
+else:
+    sys.exit("ERROR: PG_VERSION not found in image config")
+'
+}
+
+_digest_from_full() {
+    python3 -c '
+import json, sys
+digest = (json.load(sys.stdin).get("manifest") or {}).get("digest")
+if not digest:
+    sys.exit("ERROR: no digest in manifest metadata")
+print(digest)
+'
+}
+
 major_ref="docker.io/postgres:${major}-${suite}"
-current_point=$(_point_version "$major_ref")
 
 if [ "$ref" = "$major" ]; then
-    # A major reference builds against the moving major tag.
-    point="$current_point"
+    # A major reference builds against the moving major tag: base_image_tag
+    # and major_ref are the SAME ref, so the point version and the digest are
+    # both read from one fetch instead of two.
     base_image_tag="$major_ref"
+    full=$(_full_json "$major_ref")
+    current_point=$(printf '%s' "$full" | _point_version_from_full)
+    point="$current_point"
+    digest=$(printf '%s' "$full" | _digest_from_full)
 else
     # A point reference pins an immutable base image, but the major's current
     # point release is still resolved so the moving-tag guard can be applied.
+    # major_ref and base_image_tag are genuinely different refs here, so this
+    # is still two calls.
+    current_point=$(_point_version "$major_ref")
     point="$ref"
     base_image_tag="docker.io/postgres:${ref}-${suite}"
+    digest=$(_digest "$base_image_tag")
 fi
-
-digest=$(_digest "$base_image_tag")
 
 if [ "$point" = "$current_point" ]; then
     is_current=true

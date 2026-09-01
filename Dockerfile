@@ -242,14 +242,19 @@ RUN cmake \
     -B ${build_dir}
 
 WORKDIR ${build_dir}
-# -j${num_build_cores} on the command line, not via a MAKEFLAGS ARG: Docker
-# does not expand ${...} references inside another ARG's default value (only
-# inside RUN/etc. instruction text), so `ARG MAKEFLAGS='-j${num_build_cores}'`
-# reached the shell as the literal string "-j${num_build_cores}" -- which GNU
-# make parses as bare `-j`, i.e. unlimited parallel jobs, not the throttled
-# value this Dockerfile is supposed to enforce. Passing -j on the command
-# line also gives nested `make` invocations a real shared jobserver, which
-# the environment-variable form never provided.
+# -j${num_build_cores} on the command line, not via a MAKEFLAGS ARG: an ARG
+# default only sees ARGs already in scope AT THAT POINT in the file --
+# postgres_base_image (line 9) and rdkit_core_image (line 21) show that an
+# ARG default CAN reference another ARG's value, because both are global ARGs
+# and the referenced one is declared earlier. The original
+# `ARG MAKEFLAGS='-j${num_build_cores}'` was declared before this stage's own
+# `ARG num_build_cores` re-declaration above, so at that point in the file
+# num_build_cores was out of scope and the default expanded to the literal
+# string "-j${num_build_cores}" -- which GNU make parses as bare `-j`, i.e.
+# unlimited parallel jobs, not the throttled value this Dockerfile is
+# supposed to enforce. Passing -j on the command line also gives nested
+# `make` invocations a real shared jobserver, which the environment-variable
+# form never provided.
 RUN make -j${num_build_cores}
 RUN make -j${num_build_cores} install
 

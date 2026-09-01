@@ -29,7 +29,13 @@ echo "--- bookworm, floor 1.58.0: expect the LOWEST family (1.74), not 1.81 ---"
 out=$(run_in_suite bookworm 1.58.0); rc=$?
 assert_eq "0" "$rc" "bookworm/1.58.0 exits 0"
 assert_contains "$out" "Selected Boost family 1.74" "bookworm/1.58.0 picks 1.74, not 1.81"
-assert_contains "$out" "1.74.0" "bookworm/1.58.0 prints the dotted version"
+# Not `assert_contains "$out" "1.74.0"`: $out is combined stdout+stderr, and
+# apt's own output prints "libboost1.74-dev (1.74.0-...)" regardless of
+# whether the script prints anything on stdout -- that assertion would pass
+# even if install_boost.sh emitted nothing. Same stdout-only isolation the
+# 1.81 case below already gets.
+stdout_only_158=$(run_in_suite_stdout_only bookworm 1.58.0)
+assert_eq "1.74.0" "$stdout_only_158" "bookworm/1.58.0 stdout is exactly the dotted version"
 
 echo "--- bookworm, floor 1.81.0: expect 1.81, not the 1.74 suite default ---"
 out=$(run_in_suite bookworm 1.81.0); rc=$?

@@ -26,7 +26,13 @@ assert_contains "$out" "mol_to_svg" "reports the SVG check"
 assert_contains "$out" "mol_send round-trip" "reports the pickle round-trip check"
 
 echo "--- fails on a stock postgres image with no cartridge ---"
-assert_fails "stock postgres image fails the smoke test" \
+# Not a bare assert_fails: that passes on ANY non-zero exit, including a
+# failed image pull or a timed-out readiness loop, neither of which proves
+# the smoke test actually detected the missing cartridge. Pin the specific
+# failure: `CREATE EXTENSION rdkit did not take effect` is what smoke_test.sh
+# prints when the extension genuinely isn't there (scripts/smoke_test.sh:54).
+assert_rejects_with "stock postgres image fails the smoke test" \
+    "CREATE EXTENSION rdkit did not take effect" \
     "$SMOKE" "docker.io/postgres:17-bookworm"
 
 finish

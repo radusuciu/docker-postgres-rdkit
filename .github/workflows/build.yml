@@ -40,8 +40,34 @@ on:
 env:
   IMAGE: ghcr.io/${{ github.repository }}/postgres-rdkit
 
+# Without this, a push landing near the 00:00 cron gives two runs that both
+# see no build-key tag yet, both build all ten entries, and both push the
+# same tags. Worse, build-rdkit-core pushes to a MOVING tag, so run A's later
+# `build` jobs could resolve a core image run B pushed -- an artifact whose
+# digest is not the one run A's build key encodes. cancel-in-progress stays
+# false: cancelling a build mid-push could leave a tag pointing at a partial
+# image.
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.event.inputs.postgres || 'matrix' }}
+  cancel-in-progress: false
+
 jobs:
+  test-scripts:
+    # The code that decides WHAT to build (matrix.py, resolve_pg.sh,
+    # build_key.sh, resolve_matrix.sh) has no other CI coverage. Every script
+    # bug found during the single-branch-matrix refactor (the `eval` set -e
+    # defeat, a heredoc injection, a wrong-reason assertion, a swallowed auth
+    # failure) would have shipped undetected without this. Only the fully
+    # offline tier runs here -- see the Makefile's `test-scripts-offline`
+    # comment for why -- `make test-scripts` (Docker/network-bound too) stays
+    # a local-only target.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make test-scripts-offline
+
   resolve-matrix:
+    needs: test-scripts
     runs-on: ubuntu-latest
     # Ruling 26: without this, the job inherits the repository default, which
     # may not grant packages:read. This job logs in to GHCR and runs `docker
@@ -218,6 +244,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # This job concurrently holds the pulled rdkit-core image (source + the
+      # full compiled build tree + cmake), the `builder` stage's own COPY of
+      # both, test-build, and test-runtime's SEPARATE `FROM runtime` lineage,
+      # which COPYs ${source_dir}/${build_dir} a THIRD time -- roughly 2-3x
+      # peak disk against ubuntu-latest's ~14 GB usable, where pre-R7 the
+      # build tree lived in one shared cache mount and was never duplicated
+      # into layers at all. Reclaim unused preinstalled toolchains before any
+      # of that happens.
+      - name: Reclaim runner disk
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
@@ -242,6 +279,17 @@ jobs:
       # are now the same thing -- there is no separate mount state left to
       # fall out of sync. Forcing `builder` to always re-run would only cost
       # time for no remaining correctness benefit.
+      #
+      # No `cache-to` here, unlike build-rdkit-core above (Ruling 55): post-R7
+      # this job's `builder` stage COPYs in the ~1.5 GB rdkit-core build tree
+      # plus the source tree, and `mode=max` would export all of it, per
+      # matrix entry, to a shared 10 GB LRU Actions-cache repository budget --
+      # near-total eviction every run, so `cache-from` mostly misses anyway
+      # AND every job still pays the export upload for nothing. The expensive
+      # work the cache was protecting has MOVED into build-rdkit-core, whose
+      # reuse now comes from the registry (the pulled rdkit-core image), not
+      # this job's Actions cache. `cache-from` is kept: it is free on a miss
+      # and still helps when it does hit.
       - name: Build runtime image (no push)
         uses: docker/build-push-action@v6
         with:
@@ -259,7 +307,6 @@ jobs:
             rdkit_core_image=${{ env.CORE_IMAGE }}
             vcs_ref=${{ github.sha }}
           cache-from: type=gha,scope=${{ env.CACHE_SCOPE }}
-          cache-to: type=gha,mode=max,scope=${{ env.CACHE_SCOPE }}
 
       - name: Export source-derived label values
         uses: docker/build-push-action@v6

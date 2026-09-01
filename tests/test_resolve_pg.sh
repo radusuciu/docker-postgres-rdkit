@@ -43,12 +43,12 @@ assert_fails "missing suite rejected" "$RESOLVE" 17
 assert_fails "non-numeric ref rejected" "$RESOLVE" seventeen bookworm
 
 echo "--- live registry (no fixtures): metadata shape has not drifted ---"
-if docker buildx version >/dev/null 2>&1; then
+if [ -z "${SKIP_LIVE:-}" ] && docker buildx version >/dev/null 2>&1; then
     out=$(env -u PG_FIXTURE_DIR "$RESOLVE" 17 bookworm)
     assert_contains "$out" "postgres_point_version=17." "live lookup returns a 17.x point version"
     assert_contains "$out" "postgres_base_digest=sha256:" "live lookup returns a digest"
 else
-    echo "skip: docker buildx unavailable"
+    echo "skip: docker buildx unavailable or SKIP_LIVE set"
 fi
 
 finish

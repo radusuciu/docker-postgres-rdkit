@@ -121,11 +121,13 @@ RUN --mount=type=cache,target=${build_dir},id=rdkit-build-${rdkit_version}-${deb
     -B ${build_dir}
 
 WORKDIR ${build_dir}
-# -j${num_build_cores} on the command line, not via a MAKEFLAGS ARG (C2):
-# Docker does not expand ${...} references inside another ARG's default
-# value, so a `MAKEFLAGS='-j${num_build_cores}'` ARG would reach the shell
-# as the literal string "-j${num_build_cores}", which GNU make parses as a
-# bare `-j` -- unlimited parallel jobs.
+# -j${num_build_cores} on the command line, not via a MAKEFLAGS ARG: an ARG
+# default only sees ARGs already in scope AT THAT POINT in the file (mirrors
+# the identical fix and rationale in the main Dockerfile). A
+# `MAKEFLAGS='-j${num_build_cores}'` ARG declared before this stage's own
+# `ARG num_build_cores` re-declaration above would reach the shell as the
+# literal string "-j${num_build_cores}", which GNU make parses as a bare
+# `-j` -- unlimited parallel jobs, not the throttled value intended.
 RUN --mount=type=cache,target=${build_dir},id=rdkit-build-${rdkit_version}-${debian_version}-${rdk_build_descriptors3d} \
     make -j${num_build_cores}
 

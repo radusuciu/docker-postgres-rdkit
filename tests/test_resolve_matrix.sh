@@ -105,32 +105,18 @@ echo "--- dispatch mode validates DISPATCH_RDKIT / DISPATCH_DEBIAN (Ruling 39) -
 # so that if the validation ever regresses away, the fallback path still
 # can't reach the live network.
 #
-# assert_rejects_with (not a bare assert_fails) is deliberate: I mutation-
-# tested this by temporarily deleting the new validation block and re-running
-# this file. The two DISPATCH_RDKIT cases below correctly flipped to FAIL, as
-# expected -- but the two DISPATCH_DEBIAN cases kept passing anyway, because
-# an unvalidated DISPATCH_DEBIAN still makes resolve_pg.sh's PG_FIXTURE_DIR
-# lookup fail on its own (no fixture file matches a mangled suite name), so
-# the script still exited non-zero for an UNRELATED reason. A bare exit-code
-# check on those two would therefore have passed even with the validation
-# deleted -- exactly what Ruling 39 says not to write. Matching each
-# rejection's specific error text pins every assertion to the guard actually
-# added for Ruling 39, not to an incidental downstream failure.
-assert_rejects_with() {
-    local desc="$1" expected_msg="$2"; shift 2
-    TESTS_RUN=$((TESTS_RUN + 1))
-    local out rc
-    out=$("$@" 2>&1); rc=$?
-    if [ "$rc" -eq 0 ]; then
-        _fail "$desc (command unexpectedly succeeded)"
-    elif printf '%s' "$out" | grep -qF -- "$expected_msg"; then
-        pass "$desc"
-    else
-        _fail "$desc (failed, but not with the expected message)"
-        printf '  expected to contain: %s\n  actual output: %s\n' "$expected_msg" "$out" >&2
-    fi
-}
-
+# assert_rejects_with (not a bare assert_fails; now shared in tests/lib.sh)
+# is deliberate: I mutation-tested this by temporarily deleting the new
+# validation block and re-running this file. The two DISPATCH_RDKIT cases
+# below correctly flipped to FAIL, as expected -- but the two DISPATCH_DEBIAN
+# cases kept passing anyway, because an unvalidated DISPATCH_DEBIAN still
+# makes resolve_pg.sh's PG_FIXTURE_DIR lookup fail on its own (no fixture
+# file matches a mangled suite name), so the script still exited non-zero for
+# an UNRELATED reason. A bare exit-code check on those two would therefore
+# have passed even with the validation deleted -- exactly what Ruling 39 says
+# not to write. Matching each rejection's specific error text pins every
+# assertion to the guard actually added for Ruling 39, not to an incidental
+# downstream failure.
 assert_rejects_with "rdkit with an embedded newline is rejected" \
     "is not a valid RDKit release tag" \
     env DISPATCH_POSTGRES=17 "DISPATCH_RDKIT=$(printf '2023_09_6\nEXTRA=malicious')" \
@@ -191,11 +177,12 @@ echo "--- rdkit-core digest lookup: 'not found' is benign, not an error (Ruling 
 # A stub `docker` whose `buildx imagetools inspect` logs the queried ref and
 # reports a "not found" error (the shape a brand-new {rdkit, debian} pair --
 # not yet pushed by build-rdkit-core -- actually produces), and whose
-# `manifest inspect` always fails (so the postgres-side "already built?"
-# check never short-circuits this entry, and the run reaches the resolved
-# output). This proves two things a bare "did it crash" check would not:
-# the exact ref queried (${IMAGE_REPO%/*}/rdkit-core:<rdkit>-<suite>), and
-# that a "not found" lookup does NOT abort the run.
+# `manifest inspect` (the key_tag "already built?" check, also "not found"-
+# shaped: this is a brand-new pair, so neither lookup has anything to find)
+# never short-circuits this entry, so the run reaches the resolved output.
+# This proves two things a bare "did it crash" check would not: the exact
+# ref queried (${IMAGE_REPO%/*}/rdkit-core:<rdkit>-<suite>), and that a
+# "not found" lookup does NOT abort the run.
 STUB_BIN="$(mktemp -d)"
 CORE_REF_LOG="$(mktemp)"
 cat > "${STUB_BIN}/docker" <<STUB
@@ -206,6 +193,7 @@ if [ "\$1" = "buildx" ] && [ "\$2" = "imagetools" ] && [ "\$3" = "inspect" ]; th
     exit 1
 fi
 if [ "\$1" = "manifest" ] && [ "\$2" = "inspect" ]; then
+    echo "ERROR: \$2: manifest unknown" >&2
     exit 1
 fi
 exit 1
@@ -257,6 +245,52 @@ else
     _fail "a genuine core digest lookup failure was silently swallowed (exited 0)"
 fi
 assert_contains "$err_out" "digest lookup failed" "the failure names what failed"
+rm -rf "$STUB_BIN"
+
+echo "--- build-key existence check: a genuine AUTH failure is NOT silently swallowed (Ruling 57) ---"
+# Same shape as the two Ruling 48 blocks above, but for the OTHER `docker`
+# lookup in this loop: the postgres-side "already built?" check at
+# scripts/resolve_matrix.sh's key_tag block. The core digest lookup
+# ('buildx imagetools inspect') reports a benign "not found" (a brand-new
+# {rdkit, debian} pair, GHCR's normal shape on the very first run) so the
+# loop reaches the key_tag check; THAT lookup ('docker manifest inspect')
+# then fails with an auth-shaped error, not "not found" -- exactly the
+# scenario the brief calls out: rdkit-core is public but postgres-rdkit is
+# not yet readable. Before this fix, `docker manifest inspect ...
+# >/dev/null 2>&1` made this indistinguishable from "does not exist yet", so
+# the entry would be silently INCLUDED (never skipped) -- the exact same
+# collapse Ruling 48 already fixed for the core digest lookup, just on the
+# other call. Mutation-tested: reverting resolve_matrix.sh's key_tag block
+# to the old `if docker manifest inspect "$key_tag" >/dev/null 2>&1; then`
+# form makes this block wrongly PASS the "run succeeds" assertions below
+# (auth failure treated as "not built", entry silently included) while this
+# new assertion correctly flips to FAIL.
+STUB_BIN="$(mktemp -d)"
+cat > "${STUB_BIN}/docker" <<'STUB'
+#!/usr/bin/env bash
+if [ "$1" = "buildx" ] && [ "$2" = "imagetools" ] && [ "$3" = "inspect" ]; then
+    echo "ERROR: $4: not found" >&2
+    exit 1
+fi
+if [ "$1" = "manifest" ] && [ "$2" = "inspect" ]; then
+    echo "denied: requested access to the resource is denied" >&2
+    exit 1
+fi
+exit 1
+STUB
+chmod +x "${STUB_BIN}/docker"
+
+err_out=$(env -u SKIP_REGISTRY_CHECK PATH="${STUB_BIN}:${PATH}" \
+      PG_FIXTURE_DIR="${REPO_ROOT}/tests/fixtures/registry" \
+      VERSIONS_FILE=/tmp/versions-one.json "$RESOLVE" 2>&1)
+rc=$?
+TESTS_RUN=$((TESTS_RUN + 1))
+if [ "$rc" -ne 0 ]; then
+    pass "a genuine build-key existence check failure fails the run"
+else
+    _fail "a genuine build-key existence check failure was silently swallowed (exited 0, entry included)"
+fi
+assert_contains "$err_out" "build-key existence check failed" "the failure names what failed"
 rm -rf "$STUB_BIN"
 
 finish

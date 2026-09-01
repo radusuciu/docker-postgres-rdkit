@@ -28,6 +28,9 @@ def load_config(path):
         raise ValueError(f"{path}: missing required key(s): {', '.join(missing)}")
     if not isinstance(config["debian"], str):
         raise ValueError(f"{path}: 'debian' must be a string")
+    for key in ("postgres_majors", "exclude"):
+        if not isinstance(config[key], list):
+            raise ValueError(f"{path}: '{key}' must be a list")
     return config
 
 

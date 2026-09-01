@@ -39,7 +39,7 @@ Every image also carries provenance labels -- notably `org.rdkit.pickle-version`
 To run the Docker container, use:
 
 ```bash
-docker run -d ghcr.io/radusuciu/docker-postgres-rdkit/postgres-rdkit:<tag> bash
+docker run -d -e POSTGRES_PASSWORD=<password> -p 5432:5432 ghcr.io/radusuciu/docker-postgres-rdkit/postgres-rdkit:<tag>
 ```
 
 Replace <tag> with the version tag of the Docker image.
@@ -63,7 +63,7 @@ Replace <tag> with the version tag of the Docker image.
 
 ## Configuration
 
-This immage is based on the official postgres image, see [here](https://hub.docker.com/_/postgres) for details on configuration.
+This image is based on the official postgres image, see [here](https://hub.docker.com/_/postgres) for details on configuration.
 
 For details on use of the rdkit cartridge, refer to the [rdkit docs on the matter](https://www.rdkit.org/docs/Cartridge.html).
 

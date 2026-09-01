@@ -1,4 +1,4 @@
-.PHONY: help core build runtime test test-build test-runtime smoke labels test-scripts clean
+.PHONY: help core build runtime test test-build test-runtime smoke labels test-scripts test-scripts-offline clean
 
 # Without this, make does NOT delete a target whose recipe failed (e.g. a
 # `resolve_pg.sh` 429 mid-write to $(RESOLVED)), so a truncated/empty
@@ -186,6 +186,21 @@ test-scripts:
 		python3 "$$t" || fail=1; \
 	done; \
 	exit $$fail
+
+# The fully offline subset of test-scripts, safe for CI (no Docker daemon, no
+# network): test_install_boost.sh, test_runtime_packages.sh and
+# test_smoke_test.sh all require a live `docker run` against a real Debian or
+# built runtime image and are deliberately excluded. SKIP_LIVE=1 additionally
+# guards test_resolve_pg.sh's one live-registry block. This gives the suite a
+# FIXED assertion count on every run, which is the point: an offline tier
+# whose count varies is not doing its job.
+OFFLINE_TESTS := tests/test_matrix.py tests/test_build_key.sh tests/test_rdkit_labels.sh \
+                 tests/test_resolve_matrix.sh tests/test_resolve_pg.sh
+
+test-scripts-offline:
+	@fail=0; for t in $(OFFLINE_TESTS); do echo "=== $$t ==="; \
+	  case "$$t" in *.py) SKIP_LIVE=1 python3 "$$t";; *) SKIP_LIVE=1 bash "$$t";; esac || fail=1; \
+	done; exit $$fail
 
 clean:
 	rm -rf $(CACHE_DIR)

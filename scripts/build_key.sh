@@ -11,6 +11,15 @@
 #
 # versions.json is deliberately NOT an input: adding a pair must not invalidate
 # the keys of existing pairs.
+#
+# vcs_ref (the org.opencontainers.image.revision label) is correctly not a
+# build-key input either, but that means it can be STALE: the workflow's push
+# trigger's paths filter includes scripts/**, so a change to (say)
+# resolve_matrix.sh or smoke_test.sh -- which never touches an image_files
+# entry above -- triggers a run whose every entry's key is unchanged and
+# therefore skips, leaving already-published images labelled with an OLDER
+# commit SHA than HEAD. Don't treat that label as an authoritative "built
+# from this exact commit" marker.
 set -euo pipefail
 
 rdkit=""

@@ -50,6 +50,28 @@ assert_fails() {
     fi
 }
 
+# assert_rejects_with <desc> <expected-message> <command...> -- asserts a
+# non-zero exit status AND that combined stdout+stderr contains a specific
+# message. Stricter than assert_fails, which passes on ANY non-zero exit --
+# including an unrelated failure (a failed image pull, a timed-out readiness
+# loop, a typo) that happens to also produce a non-zero status. Use this
+# whenever "fails" is meant to prove a SPECIFIC guard fired, not merely that
+# the command didn't succeed.
+assert_rejects_with() {
+    local desc="$1" expected_msg="$2"; shift 2
+    TESTS_RUN=$((TESTS_RUN + 1))
+    local out rc
+    out=$("$@" 2>&1); rc=$?
+    if [ "$rc" -eq 0 ]; then
+        _fail "$desc (command unexpectedly succeeded)"
+    elif printf '%s' "$out" | grep -qF -- "$expected_msg"; then
+        pass "$desc"
+    else
+        _fail "$desc (failed, but not with the expected message)"
+        printf '  expected to contain: %s\n  actual output: %s\n' "$expected_msg" "$out" >&2
+    fi
+}
+
 finish() {
     printf '\n%s: %d assertions, %d failed\n' "$(basename "$0")" "$TESTS_RUN" "$TESTS_FAILED"
     [ "$TESTS_FAILED" -eq 0 ]
