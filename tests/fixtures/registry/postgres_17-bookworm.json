@@ -1,0 +1,4 @@
+{
+  "image": {"linux/amd64": {"config": {"Env": ["PG_VERSION=17.11-1.pgdg12+2"]}}},
+  "manifest": {"digest": "sha256:051f7b7b3abdd564d5d1bd1e8c4b9c1b6e77087d1dd22020ede611c096a272e0"}
+}

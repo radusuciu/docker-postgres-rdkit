@@ -2,7 +2,7 @@
 
 # docker-postgres-rdkit
 
-This project creates PostgreSQL docker images with the RDKit cartridge built and installed. A single `main` branch and a declarative matrix in `versions.json` drive the builds; GitHub Actions rebuilds the matrix daily and skips anything whose inputs have not changed. Images are pushed to the GitHub Container Registry (GHCR).
+This project creates PostgreSQL docker images with the RDKit cartridge built and installed. A single `main` branch and a declarative matrix in `versions.json` drive the builds; GitHub Actions rebuilds the matrix daily and skips any tag that is already published. Images are pushed to the GitHub Container Registry (GHCR).
 
 The image is based on the Dockerfile by [rvianello](https://github.com/rvianello/docker-postgres-rdkit/blob/master/Dockerfile).
 
@@ -19,16 +19,10 @@ Tags follow these rules. For the default Debian suite (the `debian` key in `vers
 | Tag | Meaning |
 | --- | --- |
 | `postgres-<pg_point>-rdkit-<rdkit>` | Reproducible pin, e.g. `postgres-17.11-rdkit-2026_03_6`. |
-| `postgres-<pg_major>-rdkit-<rdkit>-<build_key>` | Immutable; dedup/provenance. |
 | `postgres-<pg_major>-rdkit-<rdkit>` | Moving; pushed only when the build's point release is the current one for that major. |
 | `latest` | Only the newest (RDKit, PostgreSQL) pair, and only when it is current. |
 
-For a build of any other Debian suite, the point tag gains a `-<suite>` suffix, and no moving major tag and no `latest` are pushed:
-
-| Tag | Meaning |
-| --- | --- |
-| `postgres-<pg_point>-rdkit-<rdkit>-<suite>` | Reproducible pin for that suite. |
-| `postgres-<pg_major>-rdkit-<rdkit>-<build_key>` | Immutable; dedup/provenance. |
+For a build of any other Debian suite, the point tag gains a `-<suite>` suffix (`postgres-<pg_point>-rdkit-<rdkit>-<suite>`) and no moving major tag and no `latest` are pushed.
 
 This is deliberate: an on-demand build must never re-point a tag the automatic matrix owns. The automatic matrix itself is single-suite, so a non-default suite is only reachable through `make ... DEBIAN=<suite>` locally or the `Build images` workflow's `debian` `workflow_dispatch` input.
 
@@ -79,7 +73,7 @@ make runtime POSTGRES=15    RDKIT=2025_09_6 DEBIAN=trixie
 make test    POSTGRES=17.11 RDKIT=2026_03_6
 ```
 
-`POSTGRES` accepts a major (`17`, which resolves to the current point release at build time) or a point release (`17.11`, which pins an immutable base image). Run `make help` to see the full target and variable surface: targets `core build runtime test test-build test-runtime smoke labels test-scripts clean`, and variables `POSTGRES`, `RDKIT`, `DEBIAN` (defaults come from `versions.json`, so a bare `make runtime` builds the pair that gets the `latest` tag). `make core` builds the PostgreSQL-independent RDKit compile (`Dockerfile.rdkit-core`) that every other target depends on, shared across every `POSTGRES` value for the same `RDKIT`/`DEBIAN` -- `build`/`runtime`/`test-build`/`test-runtime` all run it as a prerequisite, so it is rarely invoked directly. `make smoke` runs this project's functional smoke test against a built runtime image; `make test-scripts` runs this repo's own shell/Python test suite under `tests/` and does not need Docker; `make clean` clears the `.make/` cache that memoizes `scripts/resolve_pg.sh`'s network lookups.
+`POSTGRES` accepts a major (`17`, which resolves to the current point release at build time) or a point release (`17.11`, which pins an immutable base image). Run `make help` to see the full target and variable surface: targets `core build runtime test test-build test-runtime smoke labels test-scripts clean`, and variables `POSTGRES`, `RDKIT`, `DEBIAN` (defaults come from `versions.json`, so a bare `make runtime` builds the pair that gets the `latest` tag). `make core` builds the PostgreSQL-independent RDKit compile (`Dockerfile.rdkit-core`) that every other target depends on, shared across every `POSTGRES` value for the same `RDKIT`/`DEBIAN` -- `build`/`runtime`/`test-build`/`test-runtime` all run it as a prerequisite, so it is rarely invoked directly. `make smoke` runs this project's functional smoke test against a built runtime image; `make test-scripts` runs this repo's own shell/Python test suite under `tests/` and does not need Docker; `make clean` clears the `.make/` cache that memoizes the PostgreSQL point-release lookups.
 
 ### Which RDKit releases build
 

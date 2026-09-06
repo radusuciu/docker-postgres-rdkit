@@ -1,9 +1,8 @@
 .PHONY: help core build runtime test test-build test-runtime smoke labels test-scripts test-scripts-offline clean
 
-# Without this, make does NOT delete a target whose recipe failed (e.g. a
-# `resolve_pg.sh` 429 mid-write to $(RESOLVED)), so a truncated/empty
-# .make/pg-<x>-<y>.env would be left behind and treated as up to date on
-# every later run (Ruling 42).
+# Without this, make does not delete a target whose recipe failed (a registry
+# error mid-write to $(RESOLVED)), so a truncated .make/pg-<x>-<y>.env would be
+# left behind and treated as up to date on every later run.
 .DELETE_ON_ERROR:
 
 # Defaults come from versions.json so a bare `make runtime` builds the pair that
@@ -57,10 +56,10 @@ endif
 $(CACHE_DIR):
 	mkdir -p $(CACHE_DIR)
 
-# resolve_pg.sh is a network call, so its output is cached per (ref, suite).
-# Run `make clean` to force re-resolution.
-$(RESOLVED): scripts/resolve_pg.sh | $(CACHE_DIR)
-	scripts/resolve_pg.sh $(POSTGRES) $(DEBIAN) > $@
+# Resolving PostgreSQL is a network call, so its output is cached per (ref,
+# suite). Run `make clean` to force re-resolution.
+$(RESOLVED): scripts/resolve_matrix.py | $(CACHE_DIR)
+	scripts/resolve_matrix.py resolve-pg $(POSTGRES) $(DEBIAN) > $@
 
 # $(call docker_build,<target>,<extra docker build flags>)
 # Recipes source $(RESOLVED) so a local image gets the same labels a CI build
@@ -165,14 +164,10 @@ test-scripts:
 	exit $$fail
 
 # The fully offline subset of test-scripts, safe for CI (no Docker daemon, no
-# network): test_install_boost.sh, test_runtime_packages.sh and
-# test_smoke_test.sh all require a live `docker run` against a real Debian or
-# built runtime image and are deliberately excluded. SKIP_LIVE=1 additionally
-# guards test_resolve_pg.sh's one live-registry block. This gives the suite a
-# FIXED assertion count on every run, which is the point: an offline tier
-# whose count varies is not doing its job.
-OFFLINE_TESTS := tests/test_matrix.py tests/test_build_key.sh tests/test_rdkit_labels.sh \
-                 tests/test_resolve_matrix.sh tests/test_resolve_pg.sh
+# network). test_install_boost.sh, test_runtime_packages.sh and
+# test_smoke_test.sh need a live `docker run` and are excluded; SKIP_LIVE=1
+# turns off test_resolve_matrix.py's one live-registry case.
+OFFLINE_TESTS := tests/test_matrix.py tests/test_rdkit_labels.sh tests/test_resolve_matrix.py
 
 test-scripts-offline:
 	@fail=0; for t in $(OFFLINE_TESTS); do echo "=== $$t ==="; \

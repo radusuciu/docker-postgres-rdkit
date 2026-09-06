@@ -2,7 +2,7 @@ name: Update Compatibility Matrix
 
 # Generates the README table from versions.json and the resolved point versions.
 # Committing README.md does not re-trigger build.yml: README.md is not in its
-# paths filter (SPEC R10).
+# paths filter.
 on:
   workflow_dispatch:
   push:
@@ -34,8 +34,8 @@ jobs:
               | python3 -c 'import json,sys; [print(e["postgres_major"], e["rdkit"], e["debian"]) for e in json.load(sys.stdin)]' \
               | while read -r major rdkit suite; do
                   # A bare assignment propagates `set -e` on failure; wrapping
-                  # the call directly in `eval "$(...)"` would not; see Ruling 40.
-                  row="$(scripts/resolve_pg.sh "$major" "$suite")"
+                  # the call directly in `eval "$(...)"` would not.
+                  row="$(scripts/resolve_matrix.py resolve-pg "$major" "$suite")"
                   eval "$row"
                   echo "| ${postgres_point_version} | ${rdkit} | \`postgres-${major}-rdkit-${rdkit}\` |"
                 done

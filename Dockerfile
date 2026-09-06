@@ -4,7 +4,7 @@ ARG debian_version=bookworm
 ARG postgres_major_version=17
 ARG rdkit_version=2026_03_6
 
-# Resolved by scripts/resolve_pg.sh (R4). The default reconstructs the moving
+# Resolved by scripts/resolve_matrix.py. The default reconstructs the moving
 # major tag so that a bare `docker build .` still works.
 ARG postgres_base_image=docker.io/postgres:${postgres_major_version}-${debian_version}
 ARG postgres_point_version=
