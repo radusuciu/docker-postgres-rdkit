@@ -1,14 +1,8 @@
 # PostgreSQL-independent RDKit compile (SPEC R7).
 #
-# Committed, production input to every build: scripts/build_key.sh hashes
-# this file's content into every build key (R6), and the digest of the image
-# built from it is folded into the key too (scripts/resolve_matrix.sh). Not
-# a throwaway or a spike artifact.
-#
 # The absolute paths here (source_dir, build_dir, install_dir,
 # cmake_install_dir) MUST be byte-identical to those in Dockerfile: CMake
-# caches absolute paths and any difference invalidates the whole tree. See
-# docs/spikes/2026-08-31-rdkit-core-reuse.md for why.
+# caches absolute paths and any difference invalidates the whole tree.
 ARG debian_version=bookworm
 ARG rdkit_version=2026_03_6
 ARG rdkit_repo=https://github.com/rdkit/rdkit.git

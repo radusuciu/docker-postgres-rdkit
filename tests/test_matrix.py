@@ -117,10 +117,10 @@ class TestShippedFile(unittest.TestCase):
         cfg = matrix.load_config(REPO_ROOT / "versions.json")
         self.assertEqual(cfg["debian"], "bookworm")
         self.assertEqual(cfg["exclude"], [])
-        # Assert shape, not the literal pair: SPEC.md requires the two most
+        # Assert shape, not the literal pair: the matrix tracks the two most
         # recent RDKit release families at their latest patch, so this pair
-        # is expected to change on every version bump. Pin the format
-        # (YYYY_MM_N) and the count instead of the exact values.
+        # changes on every version bump. Pin the format (YYYY_MM_N) and the
+        # count instead of the exact values.
         self.assertGreaterEqual(len(cfg["rdkit_versions"]), 1)
         for version in cfg["rdkit_versions"]:
             self.assertRegex(version, r"^\d{4}_\d{2}_\d+$")

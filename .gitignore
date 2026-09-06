@@ -1,7 +1,7 @@
 # Local build/resolve cache (Makefile)
 .make/
 
-# Never commit the from-source Boost build; see SPEC.md R2.
+# Never commit the from-source Boost build.
 Dockerfile.boost
 
 # Debug artifacts from the old branch-model workflows
@@ -10,3 +10,9 @@ github_output
 
 __pycache__/
 *.pyc
+
+# Planning documents are never committed.
+/SPEC.md
+/docs/superpowers/
+/.superpowers/
+/docs/spikes/

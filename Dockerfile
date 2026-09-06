@@ -12,12 +12,10 @@ ARG postgres_base_digest=
 
 # The published, PostgreSQL-independent RDKit compile whose tree the builder
 # reuses (R7) instead of cloning and compiling RDKit itself. Same ARG-in-ARG-
-# default shape as postgres_base_image just above, consumed by a FROM below --
-# confirmed empirically (not assumed) to expand correctly at this scope; see
-# docs/spikes/2026-08-31-rdkit-core-reuse.md and task-18-report.md's C3
-# section. `make core`/`make runtime` etc. (Makefile) always override this
-# with a local `rdkit-core:<rdkit>-<debian>` tag; the default here only
-# matters for a bare `docker build .`.
+# default shape as postgres_base_image just above, consumed by a FROM below.
+# `make core`/`make runtime` etc. (Makefile) always override this with a
+# local `rdkit-core:<rdkit>-<debian>` tag; the default here only matters for
+# a bare `docker build .`.
 ARG rdkit_core_image=ghcr.io/radusuciu/docker-postgres-rdkit/rdkit-core:${rdkit_version}-${debian_version}
 
 # Label inputs only, produced by the label-values-export stage (R9). NOTHING in
@@ -64,7 +62,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 # The PostgreSQL-independent RDKit compile (R7): source tree, Boost-toggled
 # build tree and CMake toolchain, shared across every PostgreSQL major. See
-# Dockerfile.rdkit-core and docs/spikes/2026-08-31-rdkit-core-reuse.md.
+# Dockerfile.rdkit-core.
 FROM ${rdkit_core_image} AS rdkit-core-provider
 
 ################################################################################
@@ -120,14 +118,14 @@ RUN apt-get update \
 # C4 (six cache mounts): every `--mount=type=cache,target=${build_dir}` in
 # this file is REMOVED, on all six of the RUN lines that used it (the two
 # below plus test-build's and test-runtime's ctest RUN). Dockerfile.rdkit-core
-# proved (spike) that the tree reaching THIS stage must be a normal image
+# proved that the tree reaching THIS stage must be a normal image
 # layer, not a cache mount, for `COPY --from=` to reach it at all -- a cache
 # mount on ${build_dir} in a later RUN would silently shadow whatever COPY
 # just wrote, reproducing "R7 works but every build is still slow" with no
 # error. The mount's original benefit (resume a crashed build without
 # recompiling) is also far smaller post-R7: the tree arriving via COPY is
 # already built, and the only compilation ${build_dir} sees from here on is
-# the ~15-object cartridge relink the spike measured -- not worth
+# the ~15-object cartridge relink -- not worth
 # reintroducing the shadowing hazard here to save what is now a roughly
 # one-minute retry.
 #
@@ -139,13 +137,13 @@ RUN apt-get update \
 # to ${build_dir} -- a rename during the copy, not a mismatch: CMake's
 # cached absolute paths are still /tmp/rdkit-build on both sides, which is
 # the invariant that actually matters (verified empirically below, not
-# assumed -- see task-18-report.md's Ruling 47 section).
+# assumed).
 COPY --from=rdkit-core-provider --chown=postgres:postgres ${source_dir} ${source_dir}
 COPY --from=rdkit-core-provider --chown=postgres:postgres ${build_export_dir} ${build_dir}
 COPY --from=rdkit-core-provider ${cmake_install_dir} ${cmake_install_dir}
 ENV PATH=${cmake_install_dir}/bin:$PATH
 
-# FALLBACK proven necessary by the spike (attempt 2): a plain COPY of Boost's
+# A plain COPY of Boost's
 # headers/CMake-config from the core image is not sufficient to LINK against
 # Boost -- the .so runtime libraries themselves were never copied. Installing
 # Boost again here, in the same Debian suite the core image used, selects the
@@ -211,7 +209,7 @@ USER postgres
 # image layer here, inherited from rdkit-core-provider via COPY. This
 # reconfigure toggles RDK_BUILD_PGSQL on (the only flag that differs from
 # Dockerfile.rdkit-core's configure) against that already-populated cache --
-# the mechanism the spike proved: CMake sees almost everything as already
+# CMake sees almost everything as already
 # built and only the cartridge's own sources need compiling.
 RUN cmake \
     -D RDK_BUILD_CAIRO_SUPPORT=OFF \
