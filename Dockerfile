@@ -10,13 +10,13 @@ ARG postgres_base_image=docker.io/postgres:${postgres_major_version}-${debian_ve
 ARG postgres_point_version=
 ARG postgres_base_digest=
 
-# The published, PostgreSQL-independent RDKit compile whose tree the builder
-# reuses (R7) instead of cloning and compiling RDKit itself. Same ARG-in-ARG-
-# default shape as postgres_base_image just above, consumed by a FROM below.
-# `make core`/`make runtime` etc. (Makefile) always override this with a
-# local `rdkit-core:<rdkit>-<debian>` tag; the default here only matters for
-# a bare `docker build .`.
-ARG rdkit_core_image=ghcr.io/radusuciu/docker-postgres-rdkit/rdkit-core:${rdkit_version}-${debian_version}
+# The PostgreSQL-independent RDKit compile (Dockerfile.rdkit-core) whose
+# source tree, build tree and CMake toolchain the builder reuses instead of
+# cloning and compiling RDKit itself. The default is the local tag `make core`
+# produces, so a bare `docker build .` needs `make core` first and never pulls
+# another repository's core image. The workflow passes the GHCR tag it just
+# pushed.
+ARG rdkit_core_image=rdkit-core:${rdkit_version}-${debian_version}
 
 # Label inputs only, produced by the label-values-export stage (R9). NOTHING in
 # the build reads boost_version to select a package; the Boost family is chosen

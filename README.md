@@ -95,7 +95,7 @@ Not every RDKit release compiles cleanly with this Dockerfile's default configur
 
 The releases marked "no" fail a roughly 20-minute compile at around 77%. That is an upstream test-file defect in those specific releases, fixed in the next patch release, so the fix is to build that patch release instead.
 
-To invoke `docker build` directly: since R7, the main `Dockerfile`'s builder stage starts `FROM` a separately-built, PostgreSQL-independent RDKit compile (`Dockerfile.rdkit-core`) rather than cloning and compiling RDKit itself, so a bare invocation needs that image to exist somewhere `rdkit_core_image` can resolve. The default points at this project's own published `ghcr.io/radusuciu/docker-postgres-rdkit/rdkit-core:<rdkit>-<debian>`, which requires network access and only exists for pairs the automatic matrix (or a `workflow_dispatch`) has actually built; `make`'s targets instead always build and consume a local `rdkit-core` image first (see `make core`, above), which is what you want for a fork or an unpublished pair:
+To invoke `docker build` directly, run `make core` first. The main `Dockerfile`'s builder stage starts `FROM` the separately-built, PostgreSQL-independent RDKit compile (`Dockerfile.rdkit-core`) rather than cloning and compiling RDKit itself, and the `rdkit_core_image` build argument defaults to the local tag `make core` produces (`rdkit-core:<rdkit_version>-<debian_version>`), so a fork never pulls this repository's published core image by accident:
 
 ```bash
 docker build -t <your_tag> \
@@ -111,7 +111,7 @@ Build arguments:
 * `postgres_major_version`: the major version of PostgreSQL. Formatted like `17`.
 * `postgres_point_version`: optional, labels only. Formatted like `17.11`.
 * `postgres_base_image`: optional; defaults to `docker.io/postgres:<major>-<suite>`. Set it to pin a point release or a digest.
-* `rdkit_core_image`: optional; defaults to `ghcr.io/radusuciu/docker-postgres-rdkit/rdkit-core:<rdkit_version>-<debian_version>`. The PostgreSQL-independent RDKit compile the builder stage reuses (R7, `Dockerfile.rdkit-core`). Set it to a locally-built tag (what `make` does) to avoid a network pull.
+* `rdkit_core_image`: optional; defaults to `rdkit-core:<rdkit_version>-<debian_version>`, the local tag `make core` builds from `Dockerfile.rdkit-core`. The GitHub Actions workflow sets it to the image it pushes to GHCR.
 * `rdkit_version`: an RDKit release tag suffix. Formatted like `2026_03_6`.
 
 There is no build argument that selects a Boost version. Instead, the Boost package family is chosen automatically at build time from RDKit's own declared floor (`RDK_BOOST_VERSION`), picking the lowest family in the Debian suite that satisfies it.
