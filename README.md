@@ -26,7 +26,7 @@ For a build of any other Debian suite, the point tag gains a `-<suite>` suffix (
 
 This is deliberate: an on-demand build must never re-point a tag the automatic matrix owns. The automatic matrix itself is single-suite, so a non-default suite is only reachable through `make ... DEBIAN=<suite>` locally or the `Build images` workflow's `debian` `workflow_dispatch` input.
 
-You can find every available tag either in the "Available Versions" table below (regenerated daily) or on this repository's GHCR package page, linked from the "Packages" section in the repository sidebar.
+The "Available Versions" table below lists the pairs that are currently rebuilt automatically. For the complete list of published tags, including older releases and on-demand builds, see this repository's GHCR package page, linked from the "Packages" section in the repository sidebar.
 
 Every image also carries provenance labels -- notably `org.rdkit.pickle-version`, which is the actual client/server compatibility contract: your client's RDKit must be at least the cartridge's RDKit, or a newer pickle format will be read with only a warning and produce corrupt results. Inspect the labels with `docker image inspect --format '{{json .Config.Labels}}' <image>`.
 
@@ -39,6 +39,8 @@ docker run -d -e POSTGRES_PASSWORD=<password> -p 5432:5432 ghcr.io/radusuciu/doc
 Replace <tag> with the version tag of the Docker image.
 
 ## Available Versions
+
+This table is generated from `versions.json` and shows only the (PostgreSQL, RDKit) pairs in the automatic build matrix, with the point release each major currently resolves to. It is regenerated daily and does not accumulate history: pairs removed from `versions.json` drop out, and images that were only built on demand never appear. Each row's tag is the moving major tag; the matching reproducible pin is `postgres-<pg_point>-rdkit-<rdkit>`.
 
 <!-- start automatically generated version matrix -->
 | PostgreSQL | RDKit | Tag |
