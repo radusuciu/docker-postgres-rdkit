@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -91,7 +92,7 @@ class TestValidation(unittest.TestCase):
 
 
 class TestCli(unittest.TestCase):
-    def _run(self, cfg, fmt):
+    def _run(self, cfg: dict[str, Any], fmt: str) -> str:
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
             json.dump(cfg, fh)
             path = fh.name

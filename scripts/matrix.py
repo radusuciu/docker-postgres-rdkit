@@ -15,11 +15,12 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 REQUIRED_KEYS = ("debian", "postgres_majors", "rdkit_versions", "exclude")
 
 
-def load_config(path):
+def load_config(path: str | Path) -> dict[str, Any]:
     """Read and validate versions.json."""
     with open(path) as fh:
         config = json.load(fh)
@@ -34,16 +35,16 @@ def load_config(path):
     return config
 
 
-def _pg_sort_key(major):
+def _pg_sort_key(major: str) -> int:
     return int(major)
 
 
-def _rdkit_sort_key(version):
+def _rdkit_sort_key(version: str) -> tuple[int, ...]:
     """2025_03_10 sorts above 2025_03_6, which lexicographic order gets wrong."""
     return tuple(int(part) for part in version.split("_"))
 
 
-def _excluded_set(config):
+def _excluded_set(config: dict[str, Any]) -> set[tuple[str, str]]:
     excluded = set()
     for item in config["exclude"]:
         if not str(item.get("reason", "")).strip():
@@ -54,7 +55,7 @@ def _excluded_set(config):
     return excluded
 
 
-def expand(config):
+def expand(config: dict[str, Any]) -> list[dict[str, str]]:
     """Return the build matrix, sorted (rdkit desc, postgres_major desc)."""
     excluded = _excluded_set(config)
     debian = config["debian"]
@@ -69,7 +70,7 @@ def expand(config):
     return entries
 
 
-def latest_pair(config):
+def latest_pair(config: dict[str, Any]) -> dict[str, str]:
     """The pair that receives the moving `latest` tag.
 
     expand() is already ordered (rdkit desc, postgres_major desc), so the first
@@ -83,7 +84,7 @@ def latest_pair(config):
     return entries[0]
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--file", default="versions.json", type=Path)
     parser.add_argument("--format", default="json", choices=("json", "latest", "debian"))

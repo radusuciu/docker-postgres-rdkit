@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -47,14 +48,19 @@ BASE_ENV.update({
 })
 
 
-def write_json(data):
+def write_json(data: Any) -> str:
     fh = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
     json.dump(data, fh)
     fh.close()
     return fh.name
 
 
-def run(args, env_overrides=None, unset=(), stdin=None):
+def run(
+    args: list[str],
+    env_overrides: dict[str, str] | None = None,
+    unset: tuple[str, ...] = (),
+    stdin: str | None = None,
+) -> subprocess.CompletedProcess[str]:
     env = dict(BASE_ENV)
     for key in unset:
         env.pop(key, None)
@@ -65,7 +71,7 @@ def run(args, env_overrides=None, unset=(), stdin=None):
     )
 
 
-def stub_docker(script_body):
+def stub_docker(script_body: str) -> str:
     """A temp dir holding a `docker` stub; prepend it to PATH."""
     directory = tempfile.mkdtemp()
     stub = Path(directory) / "docker"
@@ -75,12 +81,12 @@ def stub_docker(script_body):
 
 
 class ResolveMatrixTest(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.versions = write_json(ONE_MAJOR)
         self.addCleanup(os.unlink, self.versions)
         resolve_matrix._inspect_cache.clear()
 
-    def resolve(self, *args, **kwargs):
+    def resolve(self, *args: str, **kwargs: Any) -> Any:
         proc = run(["--file", self.versions, *args], **kwargs)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return json.loads(proc.stdout)
@@ -179,7 +185,7 @@ class TestDispatchMode(ResolveMatrixTest):
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("DISPATCH_RDKIT is required", proc.stderr)
 
-    def assert_rejected(self, message, **env):
+    def assert_rejected(self, message: str, **env: str) -> None:
         proc = run(["--file", self.versions], env_overrides=env)
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn(message, proc.stderr)
@@ -215,7 +221,9 @@ class TestDispatchMode(ResolveMatrixTest):
 class TestRegistryCheck(ResolveMatrixTest):
     """The existence check runs through a stub `docker` ahead of PATH."""
 
-    def with_stub(self, body, *args, env_overrides=None):
+    def with_stub(
+        self, body: str, *args: str, env_overrides: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
         directory = stub_docker(body)
         self.addCleanup(shutil.rmtree, directory)
         env = {"PATH": f"{directory}:{os.environ['PATH']}"}
@@ -291,7 +299,7 @@ class TestRegistryCheck(ResolveMatrixTest):
 
 
 class TestResolvePg(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         resolve_matrix._inspect_cache.clear()
         self.env_patch = mock.patch.dict(os.environ, {"PG_FIXTURE_DIR": str(FIXTURES)})
         self.env_patch.start()

@@ -33,6 +33,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import IO, Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import matrix  # noqa: E402
@@ -57,11 +58,11 @@ class ResolveError(Exception):
     pass
 
 
-def log(message):
+def log(message: str) -> None:
     print(message, file=sys.stderr)
 
 
-def run(cmd):
+def run(cmd: list[str]) -> tuple[int, str]:
     """Run a command and return (returncode, combined stdout+stderr)."""
     proc = subprocess.run(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
@@ -69,7 +70,7 @@ def run(cmd):
     return proc.returncode, proc.stdout
 
 
-def truthy(value):
+def truthy(value: object) -> bool:
     return str(value or "").strip().lower() in ("1", "true", "yes")
 
 
@@ -77,16 +78,19 @@ def truthy(value):
 # PostgreSQL resolution
 # ---------------------------------------------------------------------------
 
-_inspect_cache: dict[str, dict] = {}
+Json = dict[str, Any]
+Entry = dict[str, str]
+
+_inspect_cache: dict[str, Json] = {}
 
 
-def _fixture_path(ref):
+def _fixture_path(ref: str) -> Path:
     # docker.io/postgres:17-bookworm -> postgres_17-bookworm.json
     name = ref.removeprefix("docker.io/").replace("/", "_").replace(":", "_")
     return Path(os.environ["PG_FIXTURE_DIR"]) / f"{name}.json"
 
 
-def inspect_image(ref):
+def inspect_image(ref: str) -> Json:
     """Registry metadata for one image reference, without pulling layers.
 
     Returns the whole `docker buildx imagetools inspect --format '{{json .}}'`
@@ -111,7 +115,7 @@ def inspect_image(ref):
     return data
 
 
-def point_version(inspected, ref):
+def point_version(inspected: Json, ref: str) -> str:
     """The point release from the linux/amd64 config's PG_VERSION.
 
     PG_VERSION looks like "17.11-1.pgdg12+2"; the point version is the part
@@ -128,14 +132,14 @@ def point_version(inspected, ref):
     raise ResolveError(f"PG_VERSION not found in the image config for {ref}")
 
 
-def digest(inspected, ref):
+def digest(inspected: Json, ref: str) -> str:
     value = (inspected.get("manifest") or {}).get("digest")
     if not value:
         raise ResolveError(f"no digest in the manifest metadata for {ref}")
     return value
 
 
-def resolve_pg(ref, suite):
+def resolve_pg(ref: str, suite: str) -> Entry:
     """Resolve a PostgreSQL major or point reference for one Debian suite.
 
     The matrix declares majors only: building against the moving major tag picks
@@ -177,7 +181,7 @@ def resolve_pg(ref, suite):
 # ---------------------------------------------------------------------------
 
 
-def requested_entries(config):
+def requested_entries(config: Json) -> list[Entry]:
     """The unresolved {postgres_major, rdkit, debian} entries to consider."""
     postgres = os.environ.get("DISPATCH_POSTGRES", "")
     if not postgres:
@@ -201,7 +205,7 @@ def requested_entries(config):
     return [{"postgres_major": postgres, "rdkit": rdkit, "debian": suite}]
 
 
-def point_tag(entry, default_debian):
+def point_tag(entry: Entry, default_debian: str) -> str:
     """The reproducible point tag; a non-default suite gets a suffix."""
     tag = f"postgres-{entry['postgres_point']}-rdkit-{entry['rdkit']}"
     if entry["debian"] != default_debian:
@@ -209,7 +213,7 @@ def point_tag(entry, default_debian):
     return tag
 
 
-def is_published(ref):
+def is_published(ref: str) -> bool:
     rc, out = run(["docker", "manifest", "inspect", ref])
     if rc == 0:
         return True
@@ -218,7 +222,7 @@ def is_published(ref):
     raise ResolveError(f"existence check failed for {ref}:\n{out.strip()}")
 
 
-def resolve(config, force=False):
+def resolve(config: Json, force: bool = False) -> list[Entry]:
     """Fully resolved entries, minus those already published (unless forced)."""
     check = not force and not truthy(os.environ.get("SKIP_REGISTRY_CHECK"))
     image_repo = os.environ.get("IMAGE_REPO", "")
@@ -246,7 +250,7 @@ def resolve(config, force=False):
     return resolved
 
 
-def cores(entries):
+def cores(entries: list[Entry]) -> list[Entry]:
     """Distinct {rdkit, debian} pairs: one rdkit-core image serves every major."""
     seen = []
     for entry in entries:
@@ -261,7 +265,7 @@ def cores(entries):
 # ---------------------------------------------------------------------------
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -301,7 +305,8 @@ def main(argv=None):
             print(json.dumps(matrix.latest_pair(config)))
         elif args.format == "cores":
             if args.entries:
-                entries = json.load(args.entries)
+                entries_file: IO[str] = args.entries
+                entries = json.load(entries_file)
             else:
                 entries = resolve(config, force=args.force or truthy(os.environ.get("FORCE")))
             print(json.dumps(cores(entries)))
