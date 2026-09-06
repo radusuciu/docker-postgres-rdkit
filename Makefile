@@ -23,10 +23,6 @@ POSTGRES      ?= $(shell scripts/matrix.py --format latest | python3 -c 'import 
 POSTGRES      := $(POSTGRES)
 RDKIT         ?= $(shell scripts/matrix.py --format latest | python3 -c 'import json,sys; print(json.load(sys.stdin)["rdkit"])')
 RDKIT         := $(RDKIT)
-# Escape hatch for RDKit releases whose catch_tests.cpp calls
-# Descriptors::GETAWAY unguarded (the whole 2025_03 family and 2025_09_1/_2).
-# Local/on-demand lever only -- not wired into build_key.sh or any workflow.
-DESCRIPTORS3D ?= OFF
 
 # The matrix default suite, independent of any DEBIAN override -- used only to
 # decide whether the local tag needs a suite suffix (see SUITE_SUFFIX below).
@@ -44,23 +40,7 @@ LABELS_TMP := $(CACHE_DIR)/labels-tmp-$(POSTGRES)-$(RDKIT)-$(DEBIAN)
 # local target instead builds and consumes a LOCAL core image, one per
 # {RDKIT, DEBIAN} (not per POSTGRES/SUITE_SUFFIX -- that's the whole point
 # of R7: one core tree shared across every PostgreSQL major).
-#
-# Ruling 46: R7 made `DESCRIPTORS3D` (the escape hatch for RDKit releases
-# whose catch_tests.cpp calls Descriptors::GETAWAY unguarded, Ruling 35)
-# unreachable -- every target now depends on `core`, and `core`'s
-# Dockerfile.rdkit-core hardcoded RDK_BUILD_DESCRIPTORS3D=OFF, so `make core`
-# died compiling catch_tests.cpp before `DESCRIPTORS3D=ON` ever got a chance
-# to matter downstream. A DESCRIPTORS3D=ON core is a DIFFERENT compiled tree
-# from the default (OFF) one, so it gets a DISTINCT local tag (`-d3d`
-# suffix) rather than overwriting the shared `rdkit-core:<rdkit>-<debian>`
-# tag every other build depends on -- this keeps `make core` (no override)
-# and `make core DESCRIPTORS3D=ON` from clobbering each other's cache.
-ifeq ($(DESCRIPTORS3D),OFF)
-D3D_SUFFIX :=
-else
-D3D_SUFFIX := -d3d
-endif
-CORE_IMAGE := rdkit-core:$(RDKIT)-$(DEBIAN)$(D3D_SUFFIX)
+CORE_IMAGE := rdkit-core:$(RDKIT)-$(DEBIAN)
 
 # Make cannot pass a literal comma inside $(call); this is the standard escape.
 COMMA := ,
@@ -97,7 +77,6 @@ define docker_build
 		--build-arg postgres_point_version=$$postgres_point_version \
 		--build-arg postgres_base_image=$$postgres_base_image \
 		--build-arg postgres_base_digest=$$postgres_base_digest \
-		--build-arg rdk_build_descriptors3d=$(DESCRIPTORS3D) \
 		--build-arg vcs_ref=$$(git rev-parse HEAD) \
 		$(2) \
 		.
@@ -125,7 +104,6 @@ core:
 		--target rdkit-core \
 		--build-arg debian_version=$(DEBIAN) \
 		--build-arg rdkit_version=$(RDKIT) \
-		--build-arg rdk_build_descriptors3d=$(DESCRIPTORS3D) \
 		-t $(CORE_IMAGE) \
 		.
 
@@ -153,7 +131,6 @@ runtime: core $(RESOLVED) labels
 		--build-arg postgres_point_version=$$postgres_point_version \
 		--build-arg postgres_base_image=$$postgres_base_image \
 		--build-arg postgres_base_digest=$$postgres_base_digest \
-		--build-arg rdk_build_descriptors3d=$(DESCRIPTORS3D) \
 		--build-arg rdkit_pickle_version=$$rdkit_pickle_version \
 		--build-arg rdkit_cartridge_version=$$rdkit_cartridge_version \
 		--build-arg boost_version=$$boost_version \

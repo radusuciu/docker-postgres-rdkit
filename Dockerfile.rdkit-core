@@ -23,14 +23,6 @@ ARG num_build_cores=4
 # main Dockerfile.
 ARG build_export_dir=/tmp/rdkit-build-export
 
-# Local/on-demand lever only, mirroring the main Dockerfile's
-# rdk_build_descriptors3d (Ruling 35/46): default OFF, identical to what
-# this file always hardcoded, so every automatic build is unaffected. CI
-# must never set this -- scripts/build_key.sh does not key on it, and it
-# must never be added to any workflow -- see the Makefile's `core` target
-# for the local override path (a distinctly-tagged image, not a build-arg
-# override of the shared tag).
-ARG rdk_build_descriptors3d=OFF
 ARG DEBIAN_FRONTEND=noninteractive
 
 FROM docker.io/debian:${debian_version}-slim AS rdkit-core
@@ -43,7 +35,6 @@ ARG cmake_version
 ARG cmake_install_dir
 ARG num_build_cores
 ARG build_export_dir
-ARG rdk_build_descriptors3d
 ARG rdkit_version
 ARG debian_version
 ARG DEBIAN_FRONTEND
@@ -78,18 +69,13 @@ RUN curl -L https://github.com/Kitware/CMake/releases/download/v${cmake_version}
 # ${build_dir}) is what produces the real layer -- so the mount can come
 # back without reintroducing that hazard.
 #
-# The mount id omits postgres_major_version (unlike the consuming
-# Dockerfile's mount id, pre-R7): this compile is PostgreSQL-independent by
-# construction, which is R7's whole point. It DOES include
-# rdk_build_descriptors3d: an OFF-configured cache and an ON-configured
-# cache are different compiled trees (Ruling 46) built from the same
-# {rdkit_version, debian}, and sharing one mount id between them would let
-# either variant's stale/partial objects leak into the other's resume.
+# The mount id omits postgres_major_version: this compile is
+# PostgreSQL-independent by construction.
 #
 # Flag list copied verbatim from Dockerfile (HEAD) except RDK_BUILD_PGSQL
 # (OFF here, ON in the consuming stage) and the four PostgreSQL_* variables
 # (absent here, present in the consuming stage).
-RUN --mount=type=cache,target=${build_dir},id=rdkit-build-${rdkit_version}-${debian_version}-${rdk_build_descriptors3d} \
+RUN --mount=type=cache,target=${build_dir},id=rdkit-build-${rdkit_version}-${debian_version} \
     cmake \
     -D RDK_BUILD_CAIRO_SUPPORT=OFF \
     -D RDK_BUILD_INCHI_SUPPORT=ON \
@@ -97,7 +83,7 @@ RUN --mount=type=cache,target=${build_dir},id=rdkit-build-${rdkit_version}-${deb
     -D RDK_BUILD_PYTHON_WRAPPERS=OFF \
     -D RDK_BUILD_COORDGEN_SUPPORT=OFF \
     -D RDK_BUILD_MAEPARSER_SUPPORT=OFF \
-    -D RDK_BUILD_DESCRIPTORS3D=${rdk_build_descriptors3d} \
+    -D RDK_BUILD_DESCRIPTORS3D=OFF \
     -D RDK_BUILD_FREESASA_SUPPORT=OFF \
     -D RDK_BUILD_MOLINTERCHANGE_SUPPORT=OFF \
     -D RDK_BUILD_YAEHMOP_SUPPORT=OFF \
@@ -122,7 +108,7 @@ WORKDIR ${build_dir}
 # `ARG num_build_cores` re-declaration above would reach the shell as the
 # literal string "-j${num_build_cores}", which GNU make parses as a bare
 # `-j` -- unlimited parallel jobs, not the throttled value intended.
-RUN --mount=type=cache,target=${build_dir},id=rdkit-build-${rdkit_version}-${debian_version}-${rdk_build_descriptors3d} \
+RUN --mount=type=cache,target=${build_dir},id=rdkit-build-${rdkit_version}-${debian_version} \
     make -j${num_build_cores}
 
 # Export the finished tree out of the cache mount into a normal image layer
@@ -133,5 +119,5 @@ RUN --mount=type=cache,target=${build_dir},id=rdkit-build-${rdkit_version}-${deb
 # ${build_dir} itself is NOT part of this image's layers (only the mount
 # is), consistent with the mount existing purely for this image's own
 # resumability, not as an export mechanism.
-RUN --mount=type=cache,target=${build_dir},id=rdkit-build-${rdkit_version}-${debian_version}-${rdk_build_descriptors3d} \
+RUN --mount=type=cache,target=${build_dir},id=rdkit-build-${rdkit_version}-${debian_version} \
     mkdir -p ${build_export_dir} && cp -a ${build_dir}/. ${build_export_dir}/
