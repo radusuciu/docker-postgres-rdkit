@@ -1,41 +1,63 @@
 name: Update Compatibility Matrix
 
+# Generates the README table from versions.json and the resolved point versions.
+# Committing README.md does not re-trigger build.yml: README.md is not in its
+# paths filter.
 on:
   workflow_dispatch:
   push:
-    branches:
-      - 'postgres-*-*'
+    branches: [main]
+    paths:
+      - 'versions.json'
+  schedule:
+    # 01:30 UTC, an hour after build.yml's 00:00 UTC cron -- independent of
+    # it, not chained: this just needs to run sometime after a build could
+    # have landed a new point version, and re-generating on a `versions.json`
+    # push already covers the matrix-membership case.
+    - cron: '30 1 * * *'
 
 jobs:
   update_readme:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: Check out code
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0 # fetches all commits and branches
+      - uses: actions/checkout@v4
 
-      - name: Generate new compatibility matrix
+      - name: Generate the matrix table
         run: |
-          echo "| PostgreSQL | RDKit | Boost |" > new_matrix.md
-          echo "| --- | --- | --- |" >> new_matrix.md
+          set -euo pipefail
+          {
+            echo "| PostgreSQL | RDKit | Tag |"
+            echo "| --- | --- | --- |"
+            scripts/matrix.py --format json \
+              | python3 -c 'import json,sys; [print(e["postgres_major"], e["rdkit"], e["debian"]) for e in json.load(sys.stdin)]' \
+              | while read -r major rdkit suite; do
+                  # A bare assignment propagates `set -e` on failure; wrapping
+                  # the call directly in `eval "$(...)"` would not.
+                  row="$(scripts/resolve_matrix.py resolve-pg "$major" "$suite")"
+                  eval "$row"
+                  echo "| ${postgres_point_version} | ${rdkit} | \`postgres-${major}-rdkit-${rdkit}\` |"
+                done
+          } > new_matrix.md
+          cat new_matrix.md
 
-          for branch in $(git branch -r | grep 'origin/postgres-')
-          do
-            git checkout $branch
-            postgres_version=$(echo $branch | cut -d'-' -f2)
-            rdkit_version=$(echo $branch | cut -d'-' -f4)
-            boost_version=$(grep -oP '(?<=ARG boost_version=)[0-9]+\.[0-9]+' Dockerfile)
-            echo "| $postgres_version | $rdkit_version | $boost_version |" >> new_matrix.md
-          done
+      - name: Splice the table into README.md
+        run: |
+          sed -e '/<!-- start automatically generated version matrix -->/,/<!-- end automatically generated version matrix -->/{//!d}' \
+              -e '/<!-- start automatically generated version matrix -->/r new_matrix.md' \
+              README.md > temp.md
+          mv temp.md README.md
+          rm -f new_matrix.md
 
-          git checkout main
-
-          # Replace the matrix in README.md
-          sed -e '/<!-- start automatically generated version matrix -->/,/<!-- end automatically generated version matrix -->/{//!d}' -e '/<!-- start automatically generated version matrix -->/r new_matrix.md' README.md > temp.md && mv temp.md README.md
-
-          git config --global user.name "$(git log -n 1 --pretty=format:%an)"
-          git config --global user.email "$(git log -n 1 --pretty=format:%ae)"
+      - name: Commit if changed
+        run: |
+          if git diff --quiet README.md; then
+            echo "No change."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add README.md
-          git commit -m "Update compatibility matrix"
+          git commit -m "docs: update compatibility matrix"
           git push origin main

@@ -1,0 +1,372 @@
+name: Build images
+
+# One workflow; ordering is expressed with needs:. workflow_run is not used: it
+# runs against the default branch rather than the triggering commit, fires on
+# completed regardless of conclusion, and has no wait primitive.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - 'Dockerfile.rdkit-core'
+      - 'enable_extension.sql'
+      - 'versions.json'
+      - 'scripts/**'
+      - '.github/workflows/**'
+  schedule:
+    # Daily. Cost tracks upstream's release cadence, not the cron interval,
+    # because already-published tags are skipped.
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      postgres:
+        description: 'PostgreSQL major (17) or point release (17.11)'
+        required: true
+        type: string
+      rdkit:
+        description: 'RDKit release tag suffix, e.g. 2023_09_6'
+        required: true
+        type: string
+      debian:
+        description: 'Debian suite; defaults to versions.json'
+        required: false
+        type: string
+      push:
+        description: 'Push the resulting image'
+        required: false
+        type: boolean
+        default: true
+      force:
+        description: 'Rebuild even if the tag is already published'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}/postgres-rdkit
+
+# One run at a time, whatever triggered it: build-rdkit-core pushes to a
+# moving tag, so a dispatch and the cron running together could hand one
+# run's build job the other run's core image. cancel-in-progress stays false
+# because cancelling mid-push could leave a tag pointing at a partial image.
+concurrency:
+  group: build-images
+  cancel-in-progress: false
+
+jobs:
+  test-scripts:
+    # The scripts that decide what to build have no other CI coverage. Only the
+    # offline tier runs here; `make test-scripts` also needs Docker.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make test-scripts-offline
+
+  resolve-matrix:
+    needs: test-scripts
+    runs-on: ubuntu-latest
+    # packages:read is needed for the `docker manifest inspect` existence
+    # check against GHCR. The repository default may not grant it, and the
+    # resolver treats an authorization failure as a hard error rather than as
+    # "not built", so a missing grant fails loudly here instead of silently
+    # rebuilding the whole matrix every run.
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+      empty: ${{ steps.resolve.outputs.empty }}
+      latest_pair: ${{ steps.resolve.outputs.latest_pair }}
+      default_debian: ${{ steps.resolve.outputs.default_debian }}
+      # Distinct {rdkit, debian} pairs of the resolved matrix: one rdkit-core
+      # image serves every PostgreSQL major, so this is usually much smaller.
+      cores: ${{ steps.resolve.outputs.cores }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # `docker buildx imagetools inspect` (the PostgreSQL point-release
+      # lookup) needs a buildx builder instance.
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve entries and drop already-published tags
+        id: resolve
+        env:
+          IMAGE_REPO: ${{ env.IMAGE }}
+          DISPATCH_POSTGRES: ${{ inputs.postgres }}
+          DISPATCH_RDKIT: ${{ inputs.rdkit }}
+          DISPATCH_DEBIAN: ${{ inputs.debian }}
+          # A push to a path in the filter changed a build input by definition,
+          # so it rebuilds everything. The cron only fills in what is missing.
+          FORCE: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.force) }}
+        run: |
+          set -euo pipefail
+          matrix=$(scripts/resolve_matrix.py --format matrix)
+          cores=$(printf '%s' "$matrix" | scripts/resolve_matrix.py --format cores --entries -)
+          {
+            echo "matrix=${matrix}"
+            echo "cores=${cores}"
+            echo "latest_pair=$(scripts/resolve_matrix.py --format latest)"
+            echo "default_debian=$(scripts/resolve_matrix.py --format debian)"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "$matrix" = "[]" ]; then
+            echo "empty=true" >> "$GITHUB_OUTPUT"
+            echo "Nothing to build: every entry's tag is already published."
+          else
+            echo "empty=false" >> "$GITHUB_OUTPUT"
+            printf '%s' "$matrix" | python3 -m json.tool
+          fi
+
+  # One PostgreSQL-independent RDKit compile per distinct {rdkit, debian},
+  # shared by every PostgreSQL major the build job builds for that pair.
+  build-rdkit-core:
+    needs: resolve-matrix
+    if: needs.resolve-matrix.outputs.empty == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJson(needs.resolve-matrix.outputs.cores) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pushed unconditionally, not gated on `inputs.push`: the build job runs
+      # on a separate runner and can only reach this image through the
+      # registry. `inputs.push` controls whether the runtime image is
+      # published; the core image is an intermediate build input.
+      - name: Build and push rdkit-core
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.rdkit-core
+          target: rdkit-core
+          push: true
+          provenance: false
+          tags: ghcr.io/${{ github.repository }}/rdkit-core:${{ matrix.entry.rdkit }}-${{ matrix.entry.debian }}
+          build-args: |
+            debian_version=${{ matrix.entry.debian }}
+            rdkit_version=${{ matrix.entry.rdkit }}
+          cache-from: type=gha,scope=core-${{ matrix.entry.debian }}-${{ matrix.entry.rdkit }}
+          cache-to: type=gha,mode=max,scope=core-${{ matrix.entry.debian }}-${{ matrix.entry.rdkit }}
+
+  build:
+    needs: [resolve-matrix, build-rdkit-core]
+    if: needs.resolve-matrix.outputs.empty == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJson(needs.resolve-matrix.outputs.matrix) }}
+    env:
+      # The rdkit-core image build-rdkit-core just pushed for this entry.
+      CORE_IMAGE: ghcr.io/${{ github.repository }}/rdkit-core:${{ matrix.entry.rdkit }}-${{ matrix.entry.debian }}
+      # Per-entry cache scope. The Actions cache is 10 GB per repository and is
+      # evicted LRU, so concurrent matrix jobs writing to a shared scope evict
+      # each other.
+      CACHE_SCOPE: ${{ matrix.entry.debian }}-${{ matrix.entry.postgres_major }}-${{ matrix.entry.rdkit }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # This job holds the pulled rdkit-core image, the builder stage's copy
+      # of its trees, test-build, and test-runtime's separate copy: roughly
+      # 2-3x peak disk against ubuntu-latest's ~14 GB usable.
+      - name: Reclaim runner disk
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Loaded into the local daemon so the smoke test can run before anything
+      # is pushed. No cache-to: the builder stage copies in the ~1.5 GB
+      # rdkit-core build tree, and exporting that per matrix entry to the
+      # shared 10 GB Actions cache would evict everything else for no gain.
+      # The expensive work is cached in the registry as the rdkit-core image.
+      - name: Build runtime image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          load: true
+          tags: local/postgres-rdkit:candidate
+          build-args: |
+            debian_version=${{ matrix.entry.debian }}
+            postgres_major_version=${{ matrix.entry.postgres_major }}
+            postgres_point_version=${{ matrix.entry.postgres_point }}
+            postgres_base_image=${{ matrix.entry.postgres_base_image }}
+            postgres_base_digest=${{ matrix.entry.postgres_base_digest }}
+            rdkit_version=${{ matrix.entry.rdkit }}
+            rdkit_core_image=${{ env.CORE_IMAGE }}
+            vcs_ref=${{ github.sha }}
+          cache-from: type=gha,scope=${{ env.CACHE_SCOPE }}
+
+      - name: Export source-derived label values
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: label-values-export
+          outputs: type=local,dest=./label-out
+          build-args: |
+            debian_version=${{ matrix.entry.debian }}
+            postgres_major_version=${{ matrix.entry.postgres_major }}
+            postgres_base_image=${{ matrix.entry.postgres_base_image }}
+            rdkit_version=${{ matrix.entry.rdkit }}
+            rdkit_core_image=${{ env.CORE_IMAGE }}
+          cache-from: type=gha,scope=${{ env.CACHE_SCOPE }}
+
+      # An empty or truncated labels.env would otherwise stamp empty label
+      # values onto the pushed image while the job stays green.
+      - name: Read label values
+        id: labels
+        run: |
+          set -euo pipefail
+          test -s ./label-out/labels.env || {
+            echo "ERROR: label-out/labels.env is missing or empty" >&2
+            exit 1
+          }
+          cat ./label-out/labels.env
+          for key in rdkit_pickle_version rdkit_cartridge_version boost_version; do
+            value=$(sed -n "s/^${key}=//p" ./label-out/labels.env)
+            if [ -z "${value}" ]; then
+              echo "ERROR: ${key} is missing or empty in labels.env" >&2
+              exit 1
+            fi
+          done
+          cat ./label-out/labels.env >> "$GITHUB_OUTPUT"
+
+      - name: Run the build-stage test suite
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: test-build
+          build-args: |
+            debian_version=${{ matrix.entry.debian }}
+            postgres_major_version=${{ matrix.entry.postgres_major }}
+            postgres_base_image=${{ matrix.entry.postgres_base_image }}
+            rdkit_version=${{ matrix.entry.rdkit }}
+            rdkit_core_image=${{ env.CORE_IMAGE }}
+          cache-from: type=gha,scope=${{ env.CACHE_SCOPE }}
+
+      # Guards against a runtime dependency that was present at build time but
+      # not shipped, the failure mode the ldd-derived package list can have.
+      - name: Run the runtime-stage test suite
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: test-runtime
+          build-args: |
+            debian_version=${{ matrix.entry.debian }}
+            postgres_major_version=${{ matrix.entry.postgres_major }}
+            postgres_base_image=${{ matrix.entry.postgres_base_image }}
+            rdkit_version=${{ matrix.entry.rdkit }}
+            rdkit_core_image=${{ env.CORE_IMAGE }}
+          cache-from: type=gha,scope=${{ env.CACHE_SCOPE }}
+
+      - name: Functional smoke test
+        run: scripts/smoke_test.sh local/postgres-rdkit:candidate
+
+      - name: Report image size
+        # Observational only. `docker pull` is a live Docker Hub call, so a
+        # rate limit here must not discard a build that already passed every
+        # test.
+        continue-on-error: true
+        run: |
+          docker image inspect local/postgres-rdkit:candidate --format 'built: {{.Size}} bytes'
+          docker pull -q "${{ matrix.entry.postgres_base_image }}"
+          docker image inspect "${{ matrix.entry.postgres_base_image }}" --format 'base:  {{.Size}} bytes'
+
+      - name: Compute tags
+        id: tags
+        env:
+          IS_CURRENT: ${{ matrix.entry.postgres_is_current }}
+          LATEST_PAIR: ${{ needs.resolve-matrix.outputs.latest_pair }}
+          PG_MAJOR: ${{ matrix.entry.postgres_major }}
+          PG_POINT: ${{ matrix.entry.postgres_point }}
+          RDKIT: ${{ matrix.entry.rdkit }}
+          SUITE: ${{ matrix.entry.debian }}
+          DEFAULT_DEBIAN: ${{ needs.resolve-matrix.outputs.default_debian }}
+        run: |
+          set -euo pipefail
+          tags=""
+          add() { tags="${tags}${tags:+$'\n'}${IMAGE}:$1"; }
+
+          if [ "${SUITE}" = "${DEFAULT_DEBIAN}" ]; then
+            # The reproducible pin.
+            add "postgres-${PG_POINT}-rdkit-${RDKIT}"
+
+            # Moving tags must not move backwards: an on-demand build of an
+            # older point release must not re-point the major tag at it.
+            if [ "${IS_CURRENT}" = "true" ]; then
+              add "postgres-${PG_MAJOR}-rdkit-${RDKIT}"
+              latest_major=$(printf '%s' "${LATEST_PAIR}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["postgres_major"])')
+              latest_rdkit=$(printf '%s' "${LATEST_PAIR}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["rdkit"])')
+              if [ "${PG_MAJOR}" = "${latest_major}" ] && [ "${RDKIT}" = "${latest_rdkit}" ]; then
+                add "latest"
+              fi
+            fi
+          else
+            # A non-default suite is only reachable through workflow_dispatch.
+            # It gets exactly one suffixed tag, so it can never clobber a tag
+            # the automatic matrix owns.
+            add "postgres-${PG_POINT}-rdkit-${RDKIT}-${SUITE}"
+          fi
+
+          # A random heredoc delimiter cannot collide with a line of the value.
+          # The resolver already rejects dispatch inputs with embedded
+          # newlines; this is belt and braces.
+          delimiter="TAGS_EOF_$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
+          {
+            echo "tags<<${delimiter}"
+            printf '%s\n' "$tags"
+            echo "${delimiter}"
+          } >> "$GITHUB_OUTPUT"
+          printf 'Tags:\n%s\n' "$tags"
+
+      - name: Build and push
+        if: github.event_name != 'workflow_dispatch' || inputs.push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            debian_version=${{ matrix.entry.debian }}
+            postgres_major_version=${{ matrix.entry.postgres_major }}
+            postgres_point_version=${{ matrix.entry.postgres_point }}
+            postgres_base_image=${{ matrix.entry.postgres_base_image }}
+            postgres_base_digest=${{ matrix.entry.postgres_base_digest }}
+            rdkit_version=${{ matrix.entry.rdkit }}
+            rdkit_core_image=${{ env.CORE_IMAGE }}
+            rdkit_pickle_version=${{ steps.labels.outputs.rdkit_pickle_version }}
+            rdkit_cartridge_version=${{ steps.labels.outputs.rdkit_cartridge_version }}
+            boost_version=${{ steps.labels.outputs.boost_version }}
+            vcs_ref=${{ github.sha }}
+          cache-from: type=gha,scope=${{ env.CACHE_SCOPE }}
