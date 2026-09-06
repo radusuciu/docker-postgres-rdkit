@@ -6,7 +6,7 @@
 .DELETE_ON_ERROR:
 
 # Defaults come from versions.json so a bare `make runtime` builds the pair that
-# gets the `latest` tag. Override any of them on the command line (SPEC R11):
+# gets the `latest` tag. Override any of them on the command line:
 #   make runtime POSTGRES=17.11 RDKIT=2023_09_6
 #   make runtime POSTGRES=15    RDKIT=2025_03_6 DEBIAN=trixie
 #
@@ -32,21 +32,15 @@ RESOLVED   := $(CACHE_DIR)/pg-$(POSTGRES)-$(DEBIAN).env
 LABELS     := $(CACHE_DIR)/labels-$(POSTGRES)-$(RDKIT)-$(DEBIAN).env
 LABELS_TMP := $(CACHE_DIR)/labels-tmp-$(POSTGRES)-$(RDKIT)-$(DEBIAN)
 
-# R7 (C1): the published rdkit-core image (Dockerfile.rdkit-core) cannot be
-# pulled from ghcr.io in this session (no push/merge/PR access, and the tag
-# doesn't exist yet regardless) -- Dockerfile's own `rdkit_core_image` ARG
-# default points there only as the bare-`docker build .` fallback. Every
-# local target instead builds and consumes a LOCAL core image, one per
-# {RDKIT, DEBIAN} (not per POSTGRES/SUITE_SUFFIX -- that's the whole point
-# of R7: one core tree shared across every PostgreSQL major).
+# Every local target builds and consumes a local core image, one per
+# {RDKIT, DEBIAN}, shared across every PostgreSQL major.
 CORE_IMAGE := rdkit-core:$(RDKIT)-$(DEBIAN)
 
 # Make cannot pass a literal comma inside $(call); this is the standard escape.
 COMMA := ,
 
 # An on-demand build of a non-default Debian suite must not clobber the tag a
-# default-suite build owns (owner ruling, amends SPEC R4's tag shape). Computed
-# once here rather than duplicated at each use site.
+# default-suite build owns.
 ifeq ($(DEBIAN),$(MATRIX_DEBIAN))
 SUITE_SUFFIX :=
 else
@@ -63,7 +57,7 @@ $(RESOLVED): scripts/resolve_matrix.py | $(CACHE_DIR)
 
 # $(call docker_build,<target>,<extra docker build flags>)
 # Recipes source $(RESOLVED) so a local image gets the same labels a CI build
-# would (SPEC R4, R9).
+# would.
 define docker_build
 	set -eu; . $(RESOLVED); \
 	docker build \
@@ -81,22 +75,18 @@ define docker_build
 		.
 endef
 
-# The image name matches the registry tag shape (SPEC R4), with a suite suffix
-# for any non-default suite (owner ruling).
+# The image name matches the registry tag shape, with a suite suffix for any
+# non-default suite.
 image_name = postgres-rdkit:postgres-$$postgres_point_version-rdkit-$(RDKIT)$(SUITE_SUFFIX)
 
 help:
 	@echo "Targets: core build runtime test test-build test-runtime smoke labels test-scripts clean"
 	@echo "Variables: POSTGRES=$(POSTGRES) RDKIT=$(RDKIT) DEBIAN=$(DEBIAN)"
 
-# R7 (C1): build the PostgreSQL-independent RDKit core image locally and tag
-# it $(CORE_IMAGE). Not tracked via a file target (docker build is its own
-# cache), so this always re-runs, but with an unchanged Dockerfile.rdkit-core
-# and build context Docker's own layer cache makes it near-instant. Every
-# target below that ultimately builds `builder` (build, labels, runtime,
-# test-build, test-runtime) depends on this, since the builder stage's first
-# steps now COPY --from=rdkit-core-provider rather than cloning and
-# compiling RDKit itself.
+# Build the PostgreSQL-independent RDKit core image locally. Not a file target
+# (docker build is its own cache), so it always re-runs, but with an unchanged
+# Dockerfile.rdkit-core Docker's layer cache makes it near-instant. Every
+# target that builds the builder stage depends on it.
 core:
 	docker build \
 		-f Dockerfile.rdkit-core \

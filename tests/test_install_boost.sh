@@ -48,7 +48,7 @@ stdout_only=$(run_in_suite_stdout_only bookworm 1.81.0); rc=$?
 assert_eq "0" "$rc" "bookworm/1.81.0 stdout-only run exits 0"
 assert_eq "1.81.0" "$stdout_only" "bookworm/1.81.0 stdout is exactly the dotted version"
 
-echo "--- bookworm, floor 9.99.0: expect the R2 preflight failure ---"
+echo "--- bookworm, floor 9.99.0: expect the preflight failure ---"
 out=$(run_in_suite bookworm 9.99.0); rc=$?
 assert_eq "1" "$rc" "unsatisfiable floor exits 1"
 assert_contains "$out" "requires Boost >= 9.99.0" "error names the floor"

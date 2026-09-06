@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Functional smoke test for a built postgres-rdkit image (SPEC R8).
+# Functional smoke test for a built postgres-rdkit image.
 #
 # Runs against the runtime image as a user would use it, which is what makes it
-# a real backstop for the derived runtime package list (R3): a missing shared
+# a real backstop for the derived runtime package list: a missing shared
 # library fails here at LOAD time.
 set -euo pipefail
 
@@ -69,7 +69,7 @@ hits=$(q "SET enable_seqscan = off; SELECT count(*) FROM smoke WHERE m @> 'c1ccc
 echo "ok: GiST substructure query"
 
 # 5. A mol inserted in one session is byte-identical when read back in another,
-#    compared as mol_send (the pickle path, SPEC section 3.2). The text form is
+#    compared as mol_send (the pickle path). The text form is
 #    canonical SMILES, not the pickle, so comparing it would prove nothing.
 stored=$(q "SELECT encode(mol_send(m), 'hex') FROM smoke WHERE id = 1;")
 fresh=$(q "SELECT encode(mol_send('Cc1ccccc1O'::mol), 'hex');")

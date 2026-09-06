@@ -74,8 +74,8 @@ echo "Selected Boost family ${family} (floor ${floor})" >&2
 # library does not get pulled in unless asked for by name, which is how the
 # old from-source Boost image silently produced link failures). Being this
 # explicit costs nothing in the builder stage: the final runtime image's
-# package list is derived separately from `ldd` (Task 4), not from what got
-# installed here.
+# package list is derived separately from `ldd` (scripts/runtime_packages.sh),
+# not from what got installed here.
 apt-get install -y --no-install-recommends \
     "libboost${family}-dev" \
     "libboost-serialization${family}-dev" \
@@ -84,7 +84,7 @@ apt-get install -y --no-install-recommends \
     "libboost-program-options${family}-dev" \
     "libboost-regex${family}-dev" >&2
 
-# Report the exact installed version for the org.boost.version label (R9).
+# Report the exact installed version for the org.boost.version label.
 boost_int=$(sed -n 's/^#define BOOST_VERSION \([0-9]*\)$/\1/p' /usr/include/boost/version.hpp)
 [ -n "$boost_int" ] || {
     echo "ERROR: could not read BOOST_VERSION from /usr/include/boost/version.hpp" >&2

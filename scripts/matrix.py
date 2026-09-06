@@ -3,7 +3,7 @@
 
 The matrix declares what is REBUILT AUTOMATICALLY. It is not the set of
 combinations the project can build -- any pair can be built on demand via
-workflow_dispatch or `make runtime POSTGRES=... RDKIT=...` (SPEC R11). That is
+workflow_dispatch or `make runtime POSTGRES=... RDKIT=...`. That is
 what makes it reasonable for the matrix to be small.
 
 Two independent axes plus an exclusion list; the build set is the cross product
@@ -48,8 +48,7 @@ def _excluded_set(config):
     for item in config["exclude"]:
         if not str(item.get("reason", "")).strip():
             raise ValueError(
-                f"exclude entry {item!r} is missing a non-empty 'reason' "
-                "(required by SPEC R1)"
+                f"exclude entry {item!r} is missing a non-empty 'reason'"
             )
         excluded.add((str(item["postgres_major"]), str(item["rdkit"])))
     return excluded
@@ -76,7 +75,7 @@ def latest_pair(config):
     expand() is already ordered (rdkit desc, postgres_major desc), so the first
     surviving entry is the highest RDKit paired with the highest PostgreSQL
     major available for it. RDKit takes priority because it is the
-    client/server compatibility contract (SPEC section 3.2).
+    client/server compatibility contract.
     """
     entries = expand(config)
     if not entries:

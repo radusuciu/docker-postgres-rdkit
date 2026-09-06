@@ -4,7 +4,7 @@
 # The pickle version is the real client/server compatibility contract: a client
 # older than the cartridge depickles a newer format with only a warning
 # (MolPickler.cpp), producing corrupt results rather than an error. Stamping it
-# onto the image makes the check mechanical (SPEC R9, section 3.2).
+# onto the image makes the check mechanical.
 set -euo pipefail
 
 source_dir="${1:?usage: rdkit_labels.sh <rdkit-source-dir>}"

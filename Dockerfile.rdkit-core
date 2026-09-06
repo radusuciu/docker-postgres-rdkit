@@ -1,8 +1,11 @@
-# PostgreSQL-independent RDKit compile (SPEC R7).
+# PostgreSQL-independent RDKit compile, shared by every PostgreSQL major built
+# for the same {rdkit_version, debian_version}. The main Dockerfile copies the
+# source tree, the compiled build tree and the CMake toolchain out of this
+# image and only reconfigures with RDK_BUILD_PGSQL=ON.
 #
-# The absolute paths here (source_dir, build_dir, install_dir,
-# cmake_install_dir) MUST be byte-identical to those in Dockerfile: CMake
-# caches absolute paths and any difference invalidates the whole tree.
+# source_dir, build_dir, install_dir and cmake_install_dir must stay identical
+# to the main Dockerfile's defaults of the same names: CMake caches absolute
+# paths, and any difference invalidates the whole tree.
 ARG debian_version=bookworm
 ARG rdkit_version=2026_03_6
 ARG rdkit_repo=https://github.com/rdkit/rdkit.git
@@ -14,15 +17,12 @@ ARG cmake_version=3.28.3
 ARG cmake_install_dir=/opt/cmake
 ARG num_build_cores=4
 
-# Ruling 47: where the built tree lands as a NORMAL image layer, distinct
-# from ${build_dir} (which is a cache MOUNT below, not a layer -- see the
-# comment above the cache-mounted RUN steps). Consuming Dockerfile COPYs
-# --from=rdkit-core-provider FROM this path INTO its own ${build_dir}, so
-# CMake's cached absolute paths (still /tmp/rdkit-build, unchanged) match
-# there without this export path ever needing to agree with anything in the
-# main Dockerfile.
+# Where the finished build tree lands as a normal image layer. ${build_dir}
+# itself is a cache mount below, which `COPY --from=` in the main Dockerfile
+# could not reach, so the tree is exported to this sibling path and copied
+# back into ${build_dir} on the consuming side. CMake's cached paths stay
+# /tmp/rdkit-build on both sides.
 ARG build_export_dir=/tmp/rdkit-build-export
-
 ARG DEBIAN_FRONTEND=noninteractive
 
 FROM docker.io/debian:${debian_version}-slim AS rdkit-core
@@ -57,24 +57,13 @@ RUN curl -L https://github.com/Kitware/CMake/releases/download/v${cmake_version}
     && ln -s ${cmake_install_dir}/bin/ctest /usr/local/bin/ctest \
     && rm -f /tmp/cmake.sh
 
-# Ruling 47: ${build_dir} is a cache MOUNT here (not a normal layer) so a
-# crashed/interrupted `make core` resumes from already-compiled objects
-# instead of restarting a ~25-minute compile from zero -- this repo's own
-# history (`48e7fe4 brb switching to desktop. laptop keeps dying during
-# build`) is exactly the failure mode this restores. This is the mirror
-# image of the consuming Dockerfile's C4: THERE, the mount was removed
-# because the tree needed to be a real layer for `COPY --from=` to reach it.
-# HERE, nothing downstream of ${build_dir} itself needs to `COPY --from=`
-# it -- the separate export step below (into ${build_export_dir}, NOT
-# ${build_dir}) is what produces the real layer -- so the mount can come
-# back without reintroducing that hazard.
+# ${build_dir} is a cache mount so an interrupted `make core` resumes from the
+# already-compiled objects instead of restarting a ~25-minute compile. The
+# mount id omits postgres_major_version: this compile is PostgreSQL-independent.
 #
-# The mount id omits postgres_major_version: this compile is
-# PostgreSQL-independent by construction.
-#
-# Flag list copied verbatim from Dockerfile (HEAD) except RDK_BUILD_PGSQL
-# (OFF here, ON in the consuming stage) and the four PostgreSQL_* variables
-# (absent here, present in the consuming stage).
+# The flag list must match the main Dockerfile's except for RDK_BUILD_PGSQL
+# (OFF here) and the PostgreSQL_* variables (absent here). See the main
+# Dockerfile for why CHEMDRAW is off and why External/ is on the include path.
 RUN --mount=type=cache,target=${build_dir},id=rdkit-build-${rdkit_version}-${debian_version} \
     cmake \
     -D RDK_BUILD_CAIRO_SUPPORT=OFF \
@@ -101,23 +90,12 @@ RUN --mount=type=cache,target=${build_dir},id=rdkit-build-${rdkit_version}-${deb
     -B ${build_dir}
 
 WORKDIR ${build_dir}
-# -j${num_build_cores} on the command line, not via a MAKEFLAGS ARG: an ARG
-# default only sees ARGs already in scope AT THAT POINT in the file (mirrors
-# the identical fix and rationale in the main Dockerfile). A
-# `MAKEFLAGS='-j${num_build_cores}'` ARG declared before this stage's own
-# `ARG num_build_cores` re-declaration above would reach the shell as the
-# literal string "-j${num_build_cores}", which GNU make parses as a bare
-# `-j` -- unlimited parallel jobs, not the throttled value intended.
+# -j on the command line rather than through a MAKEFLAGS ARG: a global ARG
+# default cannot see this stage's ARG, so the value would reach make as a
+# literal, which it parses as an unlimited `-j`.
 RUN --mount=type=cache,target=${build_dir},id=rdkit-build-${rdkit_version}-${debian_version} \
     make -j${num_build_cores}
 
-# Export the finished tree out of the cache mount into a normal image layer
-# at a DIFFERENT path (${build_export_dir}, a sibling of ${build_dir}, not
-# nested under it -- nesting under the mount's target would put the export
-# itself inside the mounted, not-a-layer directory). This is what the
-# consuming Dockerfile's `COPY --from=rdkit-core-provider` actually reads;
-# ${build_dir} itself is NOT part of this image's layers (only the mount
-# is), consistent with the mount existing purely for this image's own
-# resumability, not as an export mechanism.
+# Export the finished tree out of the cache mount into a normal image layer.
 RUN --mount=type=cache,target=${build_dir},id=rdkit-build-${rdkit_version}-${debian_version} \
     mkdir -p ${build_export_dir} && cp -a ${build_dir}/. ${build_export_dir}/
