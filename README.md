@@ -114,6 +114,12 @@ There is no build argument that selects a Boost version. Instead, the Boost pack
 
 If no family in the suite satisfies the floor, the build fails with a message naming the floor and listing what the suite offers. The fix in that case is to raise `debian` in `versions.json`.
 
+## Releases
+
+Releases mark changes to this project, not new images. The daily build publishes new images whenever PostgreSQL or RDKit ships a release, but a GitHub release is only cut when the Dockerfiles, the build matrix in `versions.json`, the tagging rules or the workflow change in a way users should know about. Watching this repository's releases is the way to be notified of those changes; new image tags appear in the table above and on the GHCR package page. The history is in [CHANGELOG.md](CHANGELOG.md), generated with [git-cliff](https://git-cliff.org) from conventional commit messages.
+
+To cut a release: run `make changelog VERSION=X.Y.Z`, review the new section, commit it as `chore(release): vX.Y.Z`, tag `vX.Y.Z` and push the tag. The `Release` workflow renders the same commits into the GitHub release notes.
+
 ## Credits and other projects
 
 The image is based on the Dockerfile by [rvianello](https://github.com/rvianello/docker-postgres-rdkit/blob/master/Dockerfile).

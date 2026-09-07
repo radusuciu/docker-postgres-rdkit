@@ -1,0 +1,56 @@
+name: Release
+
+# Publishes a GitHub release for a pushed v* tag, with notes rendered by
+# git-cliff (cliff.toml) from the conventional commits since the previous tag.
+# A tag that already has a release is left alone, so a release created by hand
+# (`gh release create vX.Y.Z --notes-file ...`) is never overwritten.
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Skip if the release already exists
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release ${GITHUB_REF_NAME} already exists; leaving it untouched."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Render release notes
+        if: steps.existing.outputs.exists == 'false'
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          # --strip all drops the changelog header and footer; the version
+          # heading is removed below because the release title already
+          # carries the tag.
+          args: --latest --strip all
+        env:
+          OUTPUT: release_notes.md
+
+      - name: Drop the version heading
+        if: steps.existing.outputs.exists == 'false'
+        run: sed -i -e '1{/^## \[/d}' -e '/./,$!d' release_notes.md && cat release_notes.md
+
+      - name: Create GitHub release
+        if: steps.existing.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          body_path: release_notes.md

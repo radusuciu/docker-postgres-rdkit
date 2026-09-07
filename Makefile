@@ -1,4 +1,4 @@
-.PHONY: help core build runtime test test-build test-runtime smoke labels test-scripts test-scripts-offline clean
+.PHONY: help core build runtime test test-build test-runtime smoke labels test-scripts test-scripts-offline changelog clean
 
 # Without this, make does not delete a target whose recipe failed (a registry
 # error mid-write to $(RESOLVED)), so a truncated .make/pg-<x>-<y>.env would be
@@ -80,7 +80,7 @@ endef
 image_name = postgres-rdkit:postgres-$$postgres_point_version-rdkit-$(RDKIT)$(SUITE_SUFFIX)
 
 help:
-	@echo "Targets: core build runtime test test-build test-runtime smoke labels test-scripts clean"
+	@echo "Targets: core build runtime test test-build test-runtime smoke labels test-scripts changelog clean"
 	@echo "Variables: POSTGRES=$(POSTGRES) RDKIT=$(RDKIT) DEBIAN=$(DEBIAN)"
 
 # Build the PostgreSQL-independent RDKit core image locally. Not a file target
@@ -163,6 +163,17 @@ test-scripts-offline:
 	@fail=0; for t in $(OFFLINE_TESTS); do echo "=== $$t ==="; \
 	  case "$$t" in *.py) SKIP_LIVE=1 python3 "$$t";; *) SKIP_LIVE=1 bash "$$t";; esac || fail=1; \
 	done; exit $$fail
+
+# Cut a release entry: `make changelog VERSION=1.2.0` prepends a [1.2.0]
+# section to CHANGELOG.md built from the conventional commits since the
+# previous v* tag (config in cliff.toml). Review it, commit it as
+# `chore(release): v1.2.0`, tag v1.2.0 and push the tag; the Release workflow
+# then renders the same commits into the GitHub release notes.
+GIT_CLIFF ?= uvx git-cliff
+
+changelog:
+	@[ -n "$(VERSION)" ] || { echo "usage: make changelog VERSION=X.Y.Z" >&2; exit 2; }
+	$(GIT_CLIFF) --unreleased --tag v$(VERSION:v%=%) --prepend CHANGELOG.md
 
 clean:
 	rm -rf $(CACHE_DIR)
