@@ -12,7 +12,9 @@ on:
       - 'enable_extension.sql'
       - 'versions.json'
       - 'scripts/**'
-      - '.github/workflows/**'
+      # Only this workflow is a build input; release.yml and the matrix
+      # updater must not force a rebuild of every image.
+      - '.github/workflows/build.yml'
   schedule:
     # Daily. Cost tracks upstream's release cadence, not the cron interval,
     # because already-published tags are skipped.
