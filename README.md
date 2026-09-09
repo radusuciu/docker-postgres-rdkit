@@ -42,6 +42,8 @@ Replace <tag> with the version tag of the Docker image.
 
 This table is generated from `versions.json` and shows only the (PostgreSQL, RDKit) pairs in the automatic build matrix, with the point release each major currently resolves to. It is regenerated daily and does not accumulate history: pairs removed from `versions.json` drop out, and images that were only built on demand never appear. Each row's tag is the moving major tag; the matching reproducible pin is `postgres-<pg_point>-rdkit-<rdkit>`.
 
+RDKit `2024_09_6` is held in the matrix for managed-service parity rather than because it is current: it is the cartridge version Amazon RDS and Aurora for PostgreSQL ship, so those rows let you run locally against the same RDKit a managed deployment gives you.
+
 <!-- start automatically generated version matrix -->
 | PostgreSQL | RDKit | Tag |
 | --- | --- | --- |
