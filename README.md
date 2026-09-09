@@ -57,6 +57,11 @@ RDKit `2024_09_6` is held in the matrix for managed-service parity rather than b
 | 16.15 | 2025_09_6 | `postgres-16-rdkit-2025_09_6` |
 | 15.19 | 2025_09_6 | `postgres-15-rdkit-2025_09_6` |
 | 14.24 | 2025_09_6 | `postgres-14-rdkit-2025_09_6` |
+| 18.6 | 2024_09_6 | `postgres-18-rdkit-2024_09_6` |
+| 17.11 | 2024_09_6 | `postgres-17-rdkit-2024_09_6` |
+| 16.15 | 2024_09_6 | `postgres-16-rdkit-2024_09_6` |
+| 15.19 | 2024_09_6 | `postgres-15-rdkit-2024_09_6` |
+| 14.24 | 2024_09_6 | `postgres-14-rdkit-2024_09_6` |
 <!-- end automatically generated version matrix -->
 
 ## Configuration
